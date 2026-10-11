@@ -2,6 +2,7 @@
 // and runs a batch of purchase requests through the acquisition manager.
 
 #include <iostream>
+#include <cassert>
 
 #include "bookmgmt/bookmgmt.h"
 
@@ -403,5 +404,13 @@ int main() {
     for (const Resource* r : currencyCatalog.all())
         std::cout << r->id() << ": " << currencyCatalog.holdings(r->id())
                   << (r->isDigital() ? " seats" : " copies") << "\n";
+    std::cout << "\n=== Part G: standard assertions ===\n";
+    // Assertions observe existing non-zero results; no side effects inside assert.
+    const Money verifiedTotal = dollarAcq.totalSpent();
+    assert(verifiedTotal == dollarBudget.spent());
+    assert(currencyCatalog.holdings("B001") == 10);
+    std::cout << "Verified USD spending: " << verifiedTotal
+              << "; B001 holdings: " << currencyCatalog.holdings("B001") << " copies.\n"
+              << "Run bookmgmt_tests to exercise all assertion-based tests.\n";
     return 0;
 }

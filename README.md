@@ -36,7 +36,7 @@ include/bookmgmt/
   Exceptions.h          exception classes
 src/                    implementations
 examples/demo.cpp       end-to-end example
-tests/test_main.cpp     tests (tiny built-in CHECK macro, no framework)
+tests/test_main.cpp     tests (standard assert, no external framework)
 ```
 
 ## Design

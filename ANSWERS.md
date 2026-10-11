@@ -1,6 +1,6 @@
 # Assignment 2 answers
 
-## Completed: Parts A-F (Q1-Q15)
+## Completed: Parts A-G (Q1-Q16)
 
 ### Q1: Journal
 Journal derives from Resource and represents print subscriptions. The unit price
@@ -30,7 +30,7 @@ Both types have separate categories and are included in budget reports.
 ### Validation
 Each question has tests in tests/test_main.cpp and examples in examples/demo.cpp.
 Original tests are retained. Pricing behaviour changes are those requested in
-Parts B-F. Part G has not yet been attempted; macro-to-assert conversion is G.
+Parts B-F. All test conditions are now checked with standard assert for Part G.
 
 ### Q4: Hardcover surcharge
 Book::costFor adds 20% for hardcover binding without modifying the listed unit
@@ -182,3 +182,19 @@ a total in that currency, and empty history uses the default budget's currency.
 Tests exercise foreign-currency pricing, vendor selection, taxed atomic batches,
 refunds, rollover and mixed-currency departments. The demo shows successful USD
 arithmetic, intentional mismatches and non-zero USD purchases in all categories.
+
+### Q16: Replace test macros with assert
+All CHECK conditions are now standard assert calls. CHECK_THROWS expressions use
+assert with a templated throwsExpected helper: it returns true only when the
+expected exception type (or a derived type) is caught, and false for no exception
+or an unrelated exception. Every original condition and exception expression is
+preserved, including expressions with side effects. Tests for the helper cover
+correct, absent and incorrect exception types.
+
+The old macro definitions and failure/check counters are removed. Standard
+assert stops at the first failure; successful completion prints "All test groups
+passed." CMake explicitly undefines NDEBUG for the test target in every build
+configuration, including Release, so assertions and tested expressions are never
+silently skipped. Direct test builds with NDEBUG trigger a compile-time error
+unless it is undefined. The demo illustrates assertions over non-zero spending
+and holdings, with no state changes inside the assertions.
