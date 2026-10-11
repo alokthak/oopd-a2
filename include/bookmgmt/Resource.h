@@ -49,6 +49,8 @@ public:
     // 10% off. Throws if quantity <= 0.
     // EXTENSION POINT: override for discounts, fees, tiered pricing, ...
     virtual Money costFor(int quantity) const;
+    // Apply this resource's pricing rules to a vendor's unit price, without mutation.
+    virtual Money costAtUnitPrice(int quantity, Money price) const;
 
     // Writes a multi-line human-readable description.
     void print(std::ostream& os) const;

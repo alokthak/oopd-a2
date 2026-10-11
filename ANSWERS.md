@@ -1,6 +1,6 @@
 # Assignment 2 answers
 
-## Completed: Parts A-C (Q1-Q10 and quota warnings)
+## Completed: Parts A-D (Q1-Q12 and quota warnings)
 
 ### Q1: Journal
 Journal derives from Resource and represents print subscriptions. The unit price
@@ -30,7 +30,7 @@ Both types have separate categories and are included in budget reports.
 ### Validation
 Each question has tests in tests/test_main.cpp and examples in examples/demo.cpp.
 Original tests are retained. Pricing behaviour changes are those requested in
-Parts B and C. Parts D-G have not yet been attempted; macro-to-assert conversion is G.
+Parts B-D. Parts E-G have not yet been attempted; macro-to-assert conversion is G.
 
 ### Q4: Hardcover surcharge
 Book::costFor adds 20% for hardcover binding without modifying the listed unit
@@ -110,3 +110,36 @@ clear warnings. Threshold comparisons use integer arithmetic without multiplying
 large limits by four. The demo buys resources in every category for both departments. It shows the
 rollover's fresh usage briefly, then purchases in all six categories before
 printing the new-year budget report.
+
+### Q11: All-or-nothing acquisition
+processBatch(requests, true) enables atomic processing; the default false keeps
+the existing independent approval behaviour. Atomic mode stages independent
+copies of the affected department budgets, accumulated holdings and order
+records. Each request is checked against usage from earlier requests, including
+post-tax spending, unit quotas and distinct-title quotas. If any request fails,
+no budget or holdings change: every request is recorded as rejected, with its
+own failure or an explanation that another request aborted the batch. Existing
+purchases/history are retained. Successful batches apply the prepared budgets
+and holdings together. Empty batches have no effect. Each approved order can
+subsequently be cancelled through the existing cancellation API.
+
+### Q12: Vendors
+Catalog::setVendorPrice(resourceId, vendor, unitPrice) adds or updates a named
+offer; Catalog::vendors returns the recorded offers. Prices are per copy, seat,
+or annual journal subscription, matching each resource's existing unitPrice
+meaning. Offers belong to the catalogue entry and disappear when it is removed.
+Vendor names must be non-empty and prices non-negative. Quotes, approval checks,
+ordinary purchases and both batch modes select the lowest unit-price offer;
+equal prices are resolved by alphabetical vendor name for deterministic results.
+If there are no offers, the catalogue price remains the fallback.
+
+The new virtual costAtUnitPrice applies each class's existing pricing rules to
+a supplied price without mutating the resource. Hardcover surcharge, print bulk
+discounts, journal subscription years and half-price electronic seats all still
+apply; platform fees are resource-specific and unchanged between vendors. Taxes
+are applied afterward. PurchaseRecord stores the selected vendor and the original
+pre-/post-tax amounts. Cancellation records retain that vendor and refund the
+original cost even if offers later change. Reports display the vendor for orders
+with explicit offers; empty vendor fields identify catalogue-price fallback.
+The demo includes offers for all six resource types, successful atomic batches,
+and a rejected cumulative-quota batch that preserves non-zero existing usage.

@@ -37,6 +37,7 @@ struct PurchaseRecord {
     std::string department = {};
     bool cancellation = false; // cost/preTaxCost are positive refund amounts
     int cancelledOrderNo = 0;
+    std::string vendor = {}; // empty means the catalogue price was used
 };
 
 class AcquisitionManager {
@@ -64,10 +65,10 @@ public:
     // Full-order cancellation; original purchase stays unchanged in history.
     const PurchaseRecord& cancel(int orderNo);
 
-    // Processes requests in order; each is approved or rejected on its own
-    // (never throws for a rejected request). Every outcome is recorded.
-    // EXTENSION POINT: priority ordering, all-or-nothing batches, ...
-    std::vector<PurchaseRecord> processBatch(const std::vector<PurchaseRequest>& reqs);
+    // Default: each request succeeds/fails independently. Atomic mode stages all
+    // requests; if any fails, all are recorded as rejected and nothing is bought.
+    std::vector<PurchaseRecord> processBatch(const std::vector<PurchaseRequest>& reqs,
+                                             bool allOrNothing = false);
 
     const std::vector<PurchaseRecord>& history() const { return history_; }
     // Net approved amounts after subtracting cancellation refunds.
@@ -79,7 +80,10 @@ public:
 private:
     PurchaseRecord& record(const Resource* r, const std::string& id, int qty,
                            Money cost, bool approved, std::string reason, Money preTaxCost,
-                           const std::string& department);
+                           const std::string& department, const std::string& vendor);
+    struct PriceQuote { Money preTaxCost; std::string vendor; };
+    PriceQuote selectedPrice(const Resource& resource, int quantity) const;
+    std::vector<PurchaseRecord> processAtomicBatch(const std::vector<PurchaseRequest>& reqs);
     Money taxedPrice(const Resource& resource, Money preTaxCost) const;
 
     std::map<std::string, Budget*> departments_;

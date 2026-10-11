@@ -14,8 +14,13 @@ Journal::Journal(std::string id, std::string title, std::string issn, int issues
         throw std::invalid_argument("issues per year must be >= 1");
 }
 Money Journal::costFor(int copies) const {
+    return costAtUnitPrice(copies, unitPrice());
+}
+
+Money Journal::costAtUnitPrice(int copies, Money price) const {
     requirePositive(copies);
-    return printPrice(unitPrice() * copies * subscriptionYears_, copies);
+    if (price.isNegative()) throw std::invalid_argument("price must not be negative");
+    return printPrice(price * copies * subscriptionYears_, copies);
 }
 void Journal::printDetails(std::ostream& os) const {
     os << "  issn: " << issn_ << "\n"

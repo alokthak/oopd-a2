@@ -11,6 +11,11 @@
 
 namespace bookmgmt {
 
+struct VendorOffer {
+    std::string vendor;
+    Money unitPrice;
+};
+
 class Catalog {
 public:
     // Takes ownership. Throws DuplicateIdError if the id is already present.
@@ -32,6 +37,10 @@ public:
     const Resource& get(const std::string& id) const;   // throws NotFoundError
     void remove(const std::string& id);                 // throws NotFoundError
 
+    // Add or update a named vendor's per-copy/seat/annual-subscription price.
+    void setVendorPrice(const std::string& id, const std::string& vendor, Money unitPrice);
+    const std::vector<VendorOffer>& vendors(const std::string& id) const;
+
     std::size_t size() const { return items_.size(); }
     bool empty() const { return items_.empty(); }
 
@@ -50,6 +59,7 @@ private:
     struct Entry {
         std::unique_ptr<Resource> resource;
         int holdings = 0;
+        std::vector<VendorOffer> vendors;
     };
     std::map<std::string, Entry> items_;
 };

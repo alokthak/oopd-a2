@@ -46,13 +46,25 @@ Money AcquisitionManager::taxedPrice(const Resource& resource, Money preTaxCost)
     return preTaxCost + tax;
 }
 
+AcquisitionManager::PriceQuote AcquisitionManager::selectedPrice(
+    const Resource& resource, int quantity) const {
+    const auto& offers = catalog_.vendors(resource.id());
+    if (offers.empty()) return {resource.costFor(quantity), {}};
+    const auto cheapest = std::min_element(offers.begin(), offers.end(),
+        [](const VendorOffer& a, const VendorOffer& b) {
+            return a.unitPrice < b.unitPrice ||
+                   (a.unitPrice == b.unitPrice && a.vendor < b.vendor);
+        });
+    return {resource.costAtUnitPrice(quantity, cheapest->unitPrice), cheapest->vendor};
+}
+
 Money AcquisitionManager::quote(const std::string& id, int quantity) const {
     const Resource& r = catalog_.get(id);
-    return taxedPrice(r, r.costFor(quantity));
+    return taxedPrice(r, selectedPrice(r, quantity).preTaxCost);
 }
 
 Money AcquisitionManager::quoteBeforeTax(const std::string& id, int quantity) const {
-    return catalog_.get(id).costFor(quantity);
+    return selectedPrice(catalog_.get(id), quantity).preTaxCost;
 }
 
 bool AcquisitionManager::canPurchase(const std::string& id, int quantity,
@@ -64,7 +76,7 @@ bool AcquisitionManager::canPurchase(const std::string& id, int quantity,
         else {
             try {
                 why = departmentBudget(department).check(r->category(), quantity,
-                    taxedPrice(*r, r->costFor(quantity)), id);
+                    taxedPrice(*r, selectedPrice(*r, quantity).preTaxCost), id);
             } catch (const std::invalid_argument& error) {
                 why = error.what();
             }
@@ -79,22 +91,23 @@ bool AcquisitionManager::canPurchase(const std::string& id, int quantity,
 PurchaseRecord& AcquisitionManager::record(const Resource* r, const std::string& id,
                                            int qty, Money cost, bool approved,
                                            std::string reason, Money preTaxCost,
-                                           const std::string& department) {
+                                           const std::string& department, const std::string& vendor) {
     history_.push_back(PurchaseRecord{
         nextOrderNo_++, id, r ? r->title() : std::string("(unknown)"),
         r ? r->category() : ResourceCategory::Book, qty, cost, approved,
-        std::move(reason), preTaxCost, department});
+        std::move(reason), preTaxCost, department, false, 0, vendor});
     return history_.back();
 }
 
 const PurchaseRecord& AcquisitionManager::purchase(const std::string& id, int quantity,
                                                    const std::string& department) {
     const Resource& r = catalog_.get(id);        // may throw NotFoundError
-    const Money preTaxCost = r.costFor(quantity); // may throw invalid_argument
+    const PriceQuote selected = selectedPrice(r, quantity);
+    const Money preTaxCost = selected.preTaxCost;
     const Money cost = taxedPrice(r, preTaxCost);
     departmentBudget(department).commit(r.category(), quantity, cost, id);  // may throw quota/budget errors
     catalog_.addHoldings(id, quantity);
-    return record(&r, id, quantity, cost, true, {}, preTaxCost, department);
+    return record(&r, id, quantity, cost, true, {}, preTaxCost, department, selected.vendor);
 }
 
 const PurchaseRecord& AcquisitionManager::cancel(int orderNo) {
@@ -126,20 +139,24 @@ const PurchaseRecord& AcquisitionManager::cancel(int orderNo) {
 }
 
 std::vector<PurchaseRecord> AcquisitionManager::processBatch(
-    const std::vector<PurchaseRequest>& reqs) {
+    const std::vector<PurchaseRequest>& reqs, bool allOrNothing) {
+    if (allOrNothing) return processAtomicBatch(reqs);
     std::vector<PurchaseRecord> results;
     results.reserve(reqs.size());
     for (const auto& req : reqs) {
         const Resource* r = catalog_.find(req.resourceId);
         Money cost;
         Money preTaxCost;
+        std::string vendor;
         std::string why;
         if (!r) {
             why = "resource not found: " + req.resourceId;
         } else if (req.quantity <= 0) {
             why = "quantity must be positive";
         } else {
-            preTaxCost = r->costFor(req.quantity);
+            const auto selected = selectedPrice(*r, req.quantity);
+            preTaxCost = selected.preTaxCost;
+            vendor = selected.vendor;
             cost = taxedPrice(*r, preTaxCost);
             try {
                 why = departmentBudget(req.department).check(r->category(), req.quantity,
@@ -152,9 +169,75 @@ std::vector<PurchaseRecord> AcquisitionManager::processBatch(
         if (why.empty()) {
             results.push_back(purchase(req.resourceId, req.quantity, req.department));
         } else {
-            results.push_back(record(r, req.resourceId, req.quantity, cost, false, why, preTaxCost, req.department));
+            results.push_back(record(r, req.resourceId, req.quantity, cost, false, why, preTaxCost, req.department, vendor));
         }
     }
+    return results;
+}
+
+std::vector<PurchaseRecord> AcquisitionManager::processAtomicBatch(
+    const std::vector<PurchaseRequest>& reqs) {
+    if (reqs.empty()) return {};
+    std::map<std::string, Budget> stagedBudgets;
+    std::map<std::string, int> stagedHoldings;
+    std::vector<PurchaseRecord> results;
+    results.reserve(reqs.size());
+    std::string firstFailure;
+    for (const auto& req : reqs) {
+        const Resource* r = catalog_.find(req.resourceId);
+        PriceQuote selected{};
+        Money cost;
+        std::string why;
+        try {
+            if (!r) throw NotFoundError(req.resourceId);
+            selected = selectedPrice(*r, req.quantity);
+            cost = taxedPrice(*r, selected.preTaxCost);
+            // Copies include title usage accumulated by preceding requests.
+            if (!stagedBudgets.count(req.department))
+                stagedBudgets.emplace(req.department, departmentBudget(req.department));
+            auto& stagedBudget = stagedBudgets.at(req.department);
+            why = stagedBudget.check(r->category(), req.quantity, cost, req.resourceId);
+            if (why.empty()) {
+                if (!stagedHoldings.count(req.resourceId))
+                    stagedHoldings.emplace(req.resourceId, catalog_.holdings(req.resourceId));
+                auto& held = stagedHoldings.at(req.resourceId);
+                if (req.quantity > std::numeric_limits<int>::max() - held)
+                    throw std::overflow_error("holdings are too large");
+                stagedBudget.commit(r->category(), req.quantity, cost, req.resourceId);
+                held += req.quantity;
+            }
+        } catch (const std::invalid_argument& error) {
+            why = error.what();
+        } catch (const LibraryError& error) {
+            why = error.what();
+        } catch (const std::overflow_error& error) {
+            why = error.what();
+        }
+        if (!why.empty() && firstFailure.empty()) firstFailure = why;
+        results.push_back(PurchaseRecord{0, req.resourceId,
+            r ? r->title() : "(unknown)", r ? r->category() : ResourceCategory::Book,
+            req.quantity, cost, why.empty(), why, selected.preTaxCost,
+            req.department, false, 0, selected.vendor});
+    }
+    // Allocate the complete history before changing budgets or holdings.
+    auto stagedHistory = history_;
+    int orderNo = nextOrderNo_;
+    for (auto& result : results) {
+        result.orderNo = orderNo++;
+        if (!firstFailure.empty()) {
+            result.approved = false;
+            if (result.reason.empty()) result.reason = "atomic batch aborted: " + firstFailure;
+        }
+        stagedHistory.push_back(result);
+    }
+    if (firstFailure.empty()) {
+        for (auto& entry : stagedBudgets)
+            departmentBudget(entry.first) = std::move(entry.second);
+        for (const auto& entry : stagedHoldings)
+            catalog_.addHoldings(entry.first, entry.second - catalog_.holdings(entry.first));
+    }
+    history_.swap(stagedHistory);
+    nextOrderNo_ = orderNo;
     return results;
 }
 
@@ -187,6 +270,7 @@ void AcquisitionManager::printReport(std::ostream& os) const {
            << std::setw(12) << std::right << rec.cost.toString() << std::left << "  "
            << rec.title << "  [pre-tax: " << rec.preTaxCost
            << ", post-tax: " << rec.cost << "]";
+        if (!rec.vendor.empty()) os << "  [vendor: " << rec.vendor << "]";
         if (!rec.department.empty()) os << "  [department: " << rec.department << "]";
         if (rec.cancellation) os << "  [refund of order #" << rec.cancelledOrderNo << "]";
         if (!rec.approved) os << "\n        reason: " << rec.reason;

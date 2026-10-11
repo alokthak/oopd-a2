@@ -629,6 +629,167 @@ static void testRolloverAndWarnings() {
     CHECK(maximum.rollover(Money{}, 100).total() == maximum.total());
 }
 
+// Part D, Q11: atomic batches check cumulative usage and preserve existing state.
+static void testAtomicBatch() {
+    Catalog c;
+    c.emplace<Book>("B001", "Book", std::vector<std::string>{}, "i", "P", 2026, Money::of(100));
+    c.emplace<Book>("B002", "Other", std::vector<std::string>{}, "i", "P", 2026, Money::of(100));
+    Budget b(Money::of(1000));
+    b.setQuota(ResourceCategory::Book, {5, Money::of(800), 1});
+    AcquisitionManager acq(c, b, {1000, 0});
+    const auto existing = acq.purchase("B001", 1);
+    auto failed = acq.processBatch({{"B001", 3}, {"B001", 2}}, true);
+    CHECK(failed.size() == 2 && !failed[0].approved && !failed[1].approved);
+    CHECK(failed[0].reason.find("atomic batch aborted") != std::string::npos);
+    CHECK(failed[1].reason.find("unit quota") != std::string::npos);
+    CHECK(b.spent() == Money::of(110) && c.holdings("B001") == 1);
+    CHECK(b.usageFor(ResourceCategory::Book).units == 1);
+    CHECK(b.usageFor(ResourceCategory::Book).titles == 1);
+    CHECK(acq.history().size() == 3 && acq.history()[0].orderNo == existing.orderNo);
+    CHECK(acq.totalSpent() == Money::of(110));
+    auto success = acq.processBatch({{"B001", 2}, {"B001", 2}}, true);
+    CHECK(success[0].approved && success[1].approved);
+    CHECK(success[0].orderNo == 4 && success[1].orderNo == 5);
+    CHECK(b.spent() == Money::of(550) && c.holdings("B001") == 5);
+    acq.cancel(success[0].orderNo); // Atomic purchases remain cancellable individually.
+    CHECK(b.spent() == Money::of(330) && c.holdings("B001") == 3);
+    const auto historySize = acq.history().size();
+    CHECK(acq.processBatch({}, true).empty());
+    CHECK(acq.history().size() == historySize);
+    auto invalid = acq.processBatch({{"B001", 1}, {"missing", 1}, {"B001", 0},
+                                     {"B001", 1, "unknown"}}, true);
+    CHECK(!invalid[0].approved && !invalid[1].approved && !invalid[2].approved && !invalid[3].approved);
+    CHECK(invalid[1].reason.find("not found") != std::string::npos);
+    CHECK(invalid[2].reason.find("quantity") != std::string::npos);
+    CHECK(invalid[3].reason.find("unknown department") != std::string::npos);
+    CHECK(b.spent() == Money::of(330) && c.holdings("B001") == 3);
+    CHECK_THROWS(acq.cancel(invalid[0].orderNo), std::invalid_argument);
+    Budget titleBudget(Money::of(1000));
+    titleBudget.setQuota(ResourceCategory::Book, {10, Money::of(1000), 1});
+    AcquisitionManager titles(c, titleBudget);
+    auto distinct = titles.processBatch({{"B001", 1}, {"B002", 1}}, true);
+    CHECK(!distinct[0].approved && !distinct[1].approved);
+    CHECK(distinct[1].reason.find("title quota") != std::string::npos);
+    CHECK(titleBudget.usageFor(ResourceCategory::Book).titles == 0);
+    Budget spending(Money::of(1000));
+    spending.setQuota(ResourceCategory::Book, {10, Money::of(200)});
+    AcquisitionManager taxed(c, spending, {1000, 0});
+    CHECK(!taxed.processBatch({{"B001", 1}, {"B001", 1}}, true)[1].approved);
+    CHECK(spending.spent() == Money{}); // 200 pre-tax fits, 220 post-tax does not.
+    Budget total(Money::of(150));
+    AcquisitionManager limited(c, total);
+    CHECK(!limited.processBatch({{"B001", 1}, {"B001", 1}}, true)[0].approved);
+    CHECK(total.spent() == Money{});
+    Budget partialBudget(Money::of(150));
+    AcquisitionManager partial(c, partialBudget);
+    const auto ordinary = partial.processBatch({{"B001", 1}, {"B001", 1}});
+    CHECK(ordinary[0].approved && !ordinary[1].approved);
+    CHECK(partialBudget.spent() == Money::of(100));
+}
+
+static void testAtomicDepartments() {
+    Catalog c;
+    c.emplace<Book>("B001", "Book", std::vector<std::string>{}, "i", "P", 2026, Money::of(100));
+    Budget defaultBudget(Money::of(1000)), cs(Money::of(500)), physics(Money::of(150));
+    AcquisitionManager acq(c, defaultBudget);
+    acq.addDepartment("Computer Science", cs);
+    acq.addDepartment("Physics", physics);
+    auto failed = acq.processBatch({{"B001", 1, "Computer Science"}, {"B001", 2, "Physics"}}, true);
+    CHECK(!failed[0].approved && !failed[1].approved);
+    CHECK(cs.spent() == Money{} && physics.spent() == Money{} && c.holdings("B001") == 0);
+    auto success = acq.processBatch({{"B001", 2, "Computer Science"}, {"B001", 1, "Physics"},
+                                     {"B001", 1}}, true);
+    CHECK(success[0].approved && success[1].approved && success[2].approved);
+    CHECK(cs.spent() == Money::of(200) && physics.spent() == Money::of(100));
+    CHECK(defaultBudget.spent() == Money::of(100) && c.holdings("B001") == 4);
+    acq.cancel(success[1].orderNo);
+    CHECK(physics.spent() == Money{} && cs.spent() == Money::of(200));
+}
+
+// Part D, Q12: vendor prices obey the same polymorphic pricing and tax rules.
+static void testVendors() {
+    Catalog c;
+    c.emplace<Book>("B001", "Hardcover", std::vector<std::string>{}, "i", "P", 2026,
+                    Money::of(100), 1, Binding::Hardcover);
+    c.emplace<Journal>("J001", "Journal", "issn", 12, "P", 2026, Money::of(100), 2);
+    c.emplace<ElectronicResource>("R001", "DB", "P", 2026, Money::of(10), "url",
+                                  LicenseModel::Perpetual, Money::of(100));
+    c.emplace<EBook>("E001", "EBook", std::vector<std::string>{}, "i", "P", 2026,
+                     Money::of(10), "url", FileFormat::EPUB, true,
+                     LicenseModel::Perpetual, Money::of(50));
+    c.emplace<AudioBook>("A001", "Audio", "P", 2026, Money::of(10), "url", "N", 90,
+                         LicenseModel::Perpetual, Money::of(30));
+    c.emplace<Thesis>("T001", "Thesis", "U", "PhD", "S", 2026, Money::of(10));
+    Budget b(Money::of(10000));
+    AcquisitionManager acq(c, b, {1000, 2000});
+    CHECK(acq.quoteBeforeTax("B001", 1) == Money::of(120)); // No offers: catalogue pricing.
+    c.setVendorPrice("B001", "Expensive", Money::of(90));
+    c.setVendorPrice("B001", "Zeta", Money::of(80));
+    c.setVendorPrice("B001", "Alpha", Money::of(80)); // Alphabetical tie break.
+    CHECK(c.vendors("B001").size() == 3);
+    CHECK(acq.quoteBeforeTax("B001", 10) == Money::of(864));
+    CHECK(acq.quote("B001", 10) == Money::of(950, 40));
+    CHECK(c.get("B001").unitPrice() == Money::of(100)); // Quote does not mutate the object.
+    const auto hard = acq.purchase("B001", 10);
+    CHECK(hard.vendor == "Alpha" && hard.preTaxCost == Money::of(864));
+    CHECK(hard.cost == Money::of(950, 40));
+    c.setVendorPrice("B001", "Alpha", Money::of(70));
+    CHECK(c.vendors("B001").size() == 3); // Update, not duplicate vendor.
+    CHECK(acq.quoteBeforeTax("B001", 1) == Money::of(84));
+    CHECK(acq.history()[0].vendor == "Alpha" && acq.history()[0].cost == hard.cost);
+    c.setVendorPrice("J001", "Journal Vendor", Money::of(60));
+    c.setVendorPrice("R001", "Database Vendor", Money::of(5));
+    c.setVendorPrice("E001", "EBook Vendor", Money::of(8));
+    c.setVendorPrice("A001", "Audio Vendor", Money::of(6));
+    c.setVendorPrice("T001", "Thesis Vendor", Money::of(4));
+    CHECK(acq.quoteBeforeTax("J001", 10) == Money::of(1080));
+    CHECK(acq.quoteBeforeTax("R001", 60) == Money::of(375));
+    CHECK(acq.quoteBeforeTax("E001", 60) == Money::of(490));
+    CHECK(acq.quoteBeforeTax("A001", 60) == Money::of(360));
+    CHECK(acq.quoteBeforeTax("T001", 10) == Money::of(36));
+    auto purchased = acq.processBatch({{"J001", 10}, {"R001", 60}, {"E001", 60},
+                                      {"A001", 60}, {"T001", 10}}, true);
+    for (const auto& order : purchased) CHECK(order.approved && !order.vendor.empty());
+    CHECK(purchased[1].cost == Money::of(450));
+    acq.setTaxRates({0, 0});
+    acq.cancel(hard.orderNo);
+    CHECK(acq.history().back().vendor == "Alpha" && acq.history().back().cost == hard.cost);
+    CHECK(c.holdings("B001") == 0);
+    CHECK_THROWS(c.setVendorPrice("B001", "", Money::of(1)), std::invalid_argument);
+    CHECK_THROWS(c.setVendorPrice("B001", "Bad", Money::fromMinor(-1)), std::invalid_argument);
+    CHECK_THROWS(c.setVendorPrice("missing", "V", Money::of(1)), NotFoundError);
+    CHECK_THROWS(c.vendors("missing"), NotFoundError);
+    CHECK_THROWS(c.get("B001").costAtUnitPrice(1, Money::fromMinor(-1)), std::invalid_argument);
+    CHECK_THROWS(c.get("R001").costAtUnitPrice(0, Money::of(1)), std::invalid_argument);
+    std::ostringstream report;
+    acq.printReport(report);
+    CHECK(report.str().find("vendor: Alpha") != std::string::npos);
+    CHECK(report.str().find("vendor: Journal Vendor") != std::string::npos);
+    c.remove("T001");
+    c.emplace<Thesis>("T001", "New", "U", "PhD", "S", 2026);
+    CHECK(c.vendors("T001").empty()); // Offers belong to the removed resource.
+}
+
+static void testVendorQuotaChecks() {
+    Catalog c;
+    c.emplace<Book>("B001", "Book", std::vector<std::string>{}, "i", "P", 2026, Money::of(100));
+    c.setVendorPrice("B001", "Cheap", Money::of(50));
+    c.setVendorPrice("B001", "Other", Money::of(70));
+    Budget b(Money::of(110));
+    b.setQuota(ResourceCategory::Book, {4, Money::of(110), 1});
+    AcquisitionManager acq(c, b, {1000, 0});
+    CHECK(acq.canPurchase("B001", 2)); // Vendor makes a previously unaffordable request fit.
+    auto failed = acq.processBatch({{"B001", 2}, {"B001", 1}}, true);
+    CHECK(!failed[0].approved && !failed[1].approved && b.spent() == Money{});
+    CHECK(failed[0].vendor == "Cheap" && failed[0].cost == Money::of(110));
+    auto partial = acq.processBatch({{"B001", 2}, {"B001", 1}});
+    CHECK(partial[0].approved && !partial[1].approved);
+    CHECK(partial[0].vendor == "Cheap" && partial[1].vendor == "Cheap");
+    CHECK(b.spent() == Money::of(110));
+    c.setVendorPrice("B001", "Cheap", Money{});
+    CHECK(acq.quote("B001", 1) == Money{}); // Zero-price offers are legitimate.
+}
+
 int main() {
     testMoney();
     testResourcesAndCost();
@@ -645,6 +806,10 @@ int main() {
     testCancellation();
     testDepartments();
     testRolloverAndWarnings();
+    testAtomicBatch();
+    testAtomicDepartments();
+    testVendors();
+    testVendorQuotaChecks();
     std::cout << (g_checks - g_failures) << "/" << g_checks << " checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }

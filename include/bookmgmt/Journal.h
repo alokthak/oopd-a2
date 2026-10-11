@@ -11,6 +11,7 @@ public:
     int subscriptionYears() const { return subscriptionYears_; }
     ResourceCategory category() const override { return ResourceCategory::Journal; }
     Money costFor(int copies) const override;
+    Money costAtUnitPrice(int copies, Money price) const override;
 protected:
     void printDetails(std::ostream& os) const override;
 private:

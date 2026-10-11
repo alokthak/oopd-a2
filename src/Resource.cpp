@@ -41,8 +41,13 @@ void Resource::requirePositive(int quantity) {
 }
 
 Money Resource::costFor(int quantity) const {
+    return costAtUnitPrice(quantity, unitPrice());
+}
+
+Money Resource::costAtUnitPrice(int quantity, Money price) const {
     requirePositive(quantity);
-    return printPrice(unitPrice_ * quantity, quantity);
+    if (price.isNegative()) throw std::invalid_argument("price must not be negative");
+    return printPrice(price * quantity, quantity);
 }
 
 Money Resource::printPrice(Money undiscounted, int copies) {

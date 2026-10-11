@@ -21,6 +21,7 @@ public:
     Binding binding() const { return binding_; }
 
     Money costFor(int copies) const override;
+    Money costAtUnitPrice(int copies, Money price) const override;
 
     ResourceCategory category() const override { return ResourceCategory::Book; }
 

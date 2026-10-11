@@ -246,5 +246,68 @@ int main() {
     std::cout << "\nNew-year purchases across all categories:\n";
     nextYearPurchases.printReport(std::cout);
     nextYear.print(std::cout);
+    std::cout << "\n=== Part D: vendors and atomic acquisition ===\n";
+    Catalog vendorCatalog;
+    vendorCatalog.emplace<Book>("B001", "Vendor Hardcover", std::vector<std::string>{"Author"},
+                                "isbn", "Publisher", 2027, Money::of(100), 1, Binding::Hardcover);
+    vendorCatalog.emplace<Journal>("J001", "Vendor Journal", "1234-5678", 12,
+                                   "Publisher", 2027, Money::of(50), 2);
+    vendorCatalog.emplace<ElectronicResource>("R001", "Vendor Database", "Publisher", 2027,
+                                             Money::of(10), "database-url",
+                                             LicenseModel::Perpetual, Money::of(100));
+    vendorCatalog.emplace<EBook>("E001", "Vendor EBook", std::vector<std::string>{"Author"},
+                                 "isbn", "Publisher", 2027, Money::of(20), "ebook-url",
+                                 FileFormat::EPUB, true, LicenseModel::Perpetual, Money::of(50));
+    vendorCatalog.emplace<AudioBook>("A001", "Vendor AudioBook", "Publisher", 2027,
+                                     Money::of(15), "audio-url", "Narrator", 180,
+                                     LicenseModel::Perpetual, Money::of(30));
+    vendorCatalog.emplace<Thesis>("T001", "Vendor Thesis", "IIITD", "PhD", "Supervisor",
+                                 2027, Money::of(10));
+    const std::vector<std::pair<std::string, int>> offerPrices = {
+        {"B001", 80}, {"J001", 40}, {"R001", 8}, {"E001", 16}, {"A001", 12}, {"T001", 6}};
+    for (const auto& [id, price] : offerPrices) {
+        vendorCatalog.setVendorPrice(id, "Campus Supply", Money::of(price));
+        vendorCatalog.setVendorPrice(id, "Library Market", Money::of(price + 5));
+    }
+    std::cout << "Vendor unit prices (pricing rules and taxes apply afterward):\n";
+    for (const Resource* r : vendorCatalog.all()) {
+        std::cout << r->id() << " listed " << r->unitPrice();
+        for (const auto& offer : vendorCatalog.vendors(r->id()))
+            std::cout << "; " << offer.vendor << " " << offer.unitPrice;
+        std::cout << "\n";
+    }
+    Budget vendorBudget(Money::of(12000));
+    vendorBudget.setQuota(ResourceCategory::Book, {30, Money::of(4000), 2});
+    vendorBudget.setQuota(ResourceCategory::Journal, {30, Money::of(3000), 2});
+    vendorBudget.setQuota(ResourceCategory::ElectronicResource, {200, Money::of(5000), 2});
+    vendorBudget.setQuota(ResourceCategory::EBook, {200, Money::of(5000), 2});
+    vendorBudget.setQuota(ResourceCategory::AudioBook, {200, Money::of(4000), 2});
+    vendorBudget.setQuota(ResourceCategory::Thesis, {30, Money::of(500), 2});
+    AcquisitionManager vendorAcq(vendorCatalog, vendorBudget, {1000, 2000});
+    // Seed all six categories so a failed atomic batch visibly preserves real usage.
+    vendorAcq.processBatch({{"B001", 1}, {"J001", 1}, {"R001", 1},
+                            {"E001", 1}, {"A001", 1}, {"T001", 1}}, true);
+    std::cout << "\nInitial successful atomic batch across all six categories:\n";
+    vendorBudget.print(std::cout);
+
+    std::cout << "\nAtomic rejection: journal requests of 20 and 15 copies together\n"
+              << "exceed the 30-copy quota, which already has one copy in use.\n";
+    const Money spendingBeforeBatch = vendorBudget.spent();
+    const auto aborted = vendorAcq.processBatch({{"B001", 10}, {"J001", 20}, {"J001", 15}}, true);
+    for (const auto& order : aborted)
+        std::cout << order.resourceId << " x" << order.quantity << ": " << order.reason << "\n";
+    std::cout << "Spending before failed batch: " << spendingBeforeBatch
+              << "; afterward: " << vendorBudget.spent()
+              << ". B001 holdings stay at " << vendorCatalog.holdings("B001") << ".\n";
+
+    std::cout << "\nSuccessful atomic bulk purchase, selecting the cheapest vendors:\n";
+    vendorAcq.processBatch({{"B001", 10}, {"J001", 10}, {"R001", 60},
+                            {"E001", 60}, {"A001", 60}, {"T001", 10}}, true);
+    vendorAcq.printReport(std::cout);
+    vendorBudget.print(std::cout);
+    std::cout << "\nPart D holdings:\n";
+    for (const Resource* r : vendorCatalog.all())
+        std::cout << r->id() << ": " << vendorCatalog.holdings(r->id())
+                  << (r->isDigital() ? " seats" : " copies") << "\n";
     return 0;
 }

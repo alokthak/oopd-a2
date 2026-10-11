@@ -27,11 +27,16 @@ Book::Book(std::string id, std::string title, std::vector<std::string> authors,
 }
 
 Money Book::costFor(int copies) const {
+    return costAtUnitPrice(copies, unitPrice());
+}
+
+Money Book::costAtUnitPrice(int copies, Money price) const {
     requirePositive(copies);
+    if (price.isNegative()) throw std::invalid_argument("price must not be negative");
     // Apply the surcharge and bulk discount together, rounding only once.
     const int surcharge = binding_ == Binding::Hardcover ? 120 : 100;
     const int discount = copies >= 10 ? 90 : 100;
-    return scalePrice(unitPrice() * copies, surcharge * discount, 10000);
+    return scalePrice(price * copies, surcharge * discount, 10000);
 }
 
 void Book::printDetails(std::ostream& os) const {

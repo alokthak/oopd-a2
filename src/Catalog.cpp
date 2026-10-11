@@ -51,6 +51,25 @@ void Catalog::remove(const std::string& id) {
     if (items_.erase(id) == 0) throw NotFoundError(id);
 }
 
+void Catalog::setVendorPrice(const std::string& id, const std::string& vendor, Money unitPrice) {
+    get(id); // Validate the resource before accessing its entry.
+    if (vendor.empty() || unitPrice.isNegative())
+        throw std::invalid_argument("vendor name must be non-empty and price non-negative");
+    auto& offers = items_.at(id).vendors;
+    for (auto& offer : offers) {
+        if (offer.vendor == vendor) {
+            offer.unitPrice = unitPrice;
+            return;
+        }
+    }
+    offers.push_back({vendor, unitPrice});
+}
+
+const std::vector<VendorOffer>& Catalog::vendors(const std::string& id) const {
+    get(id);
+    return items_.at(id).vendors;
+}
+
 int Catalog::holdings(const std::string& id) const {
     auto it = items_.find(id);
     if (it == items_.end()) throw NotFoundError(id);

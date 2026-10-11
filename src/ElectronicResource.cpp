@@ -27,11 +27,16 @@ ElectronicResource::ElectronicResource(std::string id, std::string title,
 }
 
 Money ElectronicResource::costFor(int seats) const {
+    return costAtUnitPrice(seats, unitPrice());
+}
+
+Money ElectronicResource::costAtUnitPrice(int seats, Money price) const {
     requirePositive(seats);
+    if (price.isNegative()) throw std::invalid_argument("price must not be negative");
     const int fullPriceSeats = seats > 50 ? 50 : seats;
     const int halfPriceSeats = seats > 50 ? seats - 50 : 0;
-    return platformFee_ + unitPrice() * fullPriceSeats
-           + scalePrice(unitPrice() * halfPriceSeats, 1, 2);
+    return platformFee_ + price * fullPriceSeats
+           + scalePrice(price * halfPriceSeats, 1, 2);
 }
 
 void ElectronicResource::printDetails(std::ostream& os) const {
