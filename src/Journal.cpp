@@ -1,3 +1,6 @@
+// Roll No.: MT26018
+// Name: Alok Kumar Thakur
+
 #include "bookmgmt/Journal.h"
 #include <ostream>
 #include <stdexcept>

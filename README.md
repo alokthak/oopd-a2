@@ -193,3 +193,85 @@ the classes they add.
 
 19. ★★ Add a currency code to `Money`; adding amounts in different
     currencies should throw an exception.
+
+## Student details
+
+- Name: Alok Kumar Thakur
+- Roll No.: MT26018
+
+New code files begin with the roll number and name. Modified instructor-supplied
+files retain their original opening comments.
+
+## Generative AI disclosure
+
+OpenAI Codex was used to help implement Parts A-G, write and revise tests and demo
+examples, explain the supplied C++ code and build process, and prepare the written
+answers. Its changes were reviewed by the student, who handled commits and pushes.
+The implementation was checked with CMake/CTest and warning-enabled compilation.
+AI-assisted source changes remain subject to the student's review and responsibility.
+
+### Implementation prompts
+
+The following implementation and revision prompts were provided in this chat.
+The assignment PDF, original source files, terminal output and screenshots were
+also supplied as context where applicable.
+
+1. "Let's the follow the convention of committing all the changes after completing each part i.e. A, B, C, ..., G."
+2. "I have made the initial commit and pushed to the remote repo. Now, make all the changes for completing Part A. Make sure to follow the general instructions stated in the pdf."
+3. "Don't commit. Just make the changes so that I can manually go through all of your code changes. I will commit and push those changes myself."
+4. "I have pushed Part A changes. Now implement Part B."
+5. "Please check this output. I see a lot of zeros in output for Part B. Also, some zeros in Part A."
+6. "Don't you think that it is better to have examples with non-zero outputs ?"
+7. "So, according to you, we should not make any changes further, right ?"
+8. "So, what should we do ?"
+9. "I noticed now, that the original code i.e. before Part A is also having many zeros in the output. Was that the case ?"
+10. "You changed the format of the ids of the resources in the holdings from something like B001 to only alphabets."
+11. "So, please do so." (Restore the established resource ID format.)
+12. "I have now committed and pushed Part B changes. Now, implement code changes for Part C."
+13. "Part C's output also contain a lot of zeros."
+14. "Please do not make examples which results in mostly 0 outputs. Those kind of outputs don't look good."
+15. "I have committed and pushed the changes for Part C. Now, implement Part D."
+16. "I have committed and pushed changes for Part D. Now, implement Part E."
+17. "Why are you saving demo's catalogue to `build/part_e_catalog.txt` ?"
+18. "Please check the Assignment_2.pdf file. It got changed and we were not informed about it. I just noticed that and replaced it with the new version of that pdf. Please check and tell what all have to be changed again."
+19. "So, make the code changes in Part C and Part E to align with the revised PDF."
+20. "I have pushed the changes. Now implement Part F."
+21. "I have pushed Part F code changes. Now implement Part G."
+22. "My Roll No. is MT26018 and my name is Alok Kumar Thakur." The accompanying instructions were: "Each code file (apart from the supplied ones) must have the RollNo. & Name as a comment in the very beginning." and "As discussed, generative AI is allowed, but the prompts should be disclosed in the README file."
+
+The revised PDF removed quota warnings and catalogue save/load. Those features
+were removed from the final implementation; the persistence-related prompts
+above describe that earlier stage of the work.
+
+### Explanation and workflow prompts
+
+The following additional prompts requested explanations or workflow guidance;
+quoted commands, source snippets and pasted output accompanied some requests.
+
+- "This folder contains a pdf explaining the assignment and the extracted zip folder containing all the files of the original assignment. Please go through this folder and tell me whether I can do this on my Macbook Pro M4 Pro or will I have to do it on an already setup artix base Linux Virtual Machine ?"
+- "How to use CMake ?"
+- "What does the above command do ?" (`-DCMAKE_BUILD_TYPE=Debug`)
+- "Does the above command create threads indefinitely i.e. is there no limit to the number of threads being created ?" (`cmake --build build --parallel`)
+- "Can you explain this output by referring to the lines in the CMakeLists.txt file ?" (Pasted build output.)
+- "Explain the above output." (Pasted demo output.)
+- "Explain how catalog.all() function returns the vector<Resource> containing all 4 resources ?" (With the loop printing summaries.)
+- "But how does where() function know that it has to pass the argument of Resource& by iterating through the vector<Resource*> object which called this all() function ?"
+- "What is the use of stating the quote ? And why are those specific numbers and categories shown ?"
+- "What does std::left and std::right do ?"
+- "Explain the above code, w.r.t the below output:" (The order-report formatting code and its output.)
+- "Ok, Now I will proceed with the assignment. Have you read the submission instructions ?"
+- "I am creating a github repository and thinking of pushing the original assignment without doing any modifications to that github repo. After that I will start solving the assignment. Sounds good ?"
+- "Why are you putting /demo and /bookmgmt_tests in .gitignore file ? They were part of the original repo, right ?"
+- "How to check what is the remote branch and the repo from my local git repo ?"
+- "I want to change the remote repo. How to do it ?"
+- "How to set the upstream branch ?"
+- "What will this command do ?" (`git push -u origin main`)
+- "My repository is named oopd-a2."
+- "What does drm mean ?"
+- "What commands should I run to test the changes using the cmake file after every time you make a change ?"
+- "Is the above command not required after each time you make changes in the code ?" (`cmake -S . -B build`, followed by the proposed configure/build/test/demo sequence.)
+- "Please explain why running the above command not necessary everytime ?"
+- "Should I commit and push now ?"
+- "Was adding Pricing.h and not Pricing.cpp intentional ?"
+- "Why did you use inline with it ?"
+- "Give the commit message"
