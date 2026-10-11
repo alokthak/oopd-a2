@@ -1,6 +1,7 @@
 // Minimal self-contained test runner (no external framework needed).
 
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -427,6 +428,207 @@ static void testTaxes() {
     CHECK(acq.quote("tiny", 1) == Money::fromMinor(6)); // Half a paise rounds up.
 }
 
+// Part C, Q7: count catalogue IDs, not copies or repeated purchases.
+static void testTitleQuotas() {
+    Catalog c;
+    for (const auto& id : {"B001", "B002", "B003"})
+        c.emplace<Book>(id, "Same displayed title", std::vector<std::string>{}, "i", "P",
+                        2026, Money::of(10));
+    c.emplace<Journal>("J001", "Journal", "issn", 12, "P", 2026, Money::of(10));
+    Budget b(Money::of(1000));
+    b.setQuota(ResourceCategory::Book, {30, Money::of(1000), 2});
+    b.setQuota(ResourceCategory::Journal, {10, Money::of(100), 1});
+    AcquisitionManager acq(c, b);
+    acq.purchase("B001", 2);
+    acq.purchase("B001", 1);
+    CHECK(b.usageFor(ResourceCategory::Book).titles == 1);
+    CHECK(*b.titlesRemaining(ResourceCategory::Book) == 1);
+    CHECK(acq.canPurchase("B002", 1));
+    CHECK(b.usageFor(ResourceCategory::Book).titles == 1); // Query has no effects.
+    acq.purchase("B002", 1);
+    CHECK(b.usageFor(ResourceCategory::Book).titles == 2);
+    std::string reason;
+    CHECK(!acq.canPurchase("B003", 1, &reason));
+    CHECK(reason.find("title quota") != std::string::npos);
+    CHECK_THROWS(acq.purchase("B003", 1), QuotaExceededError);
+    CHECK(c.holdings("B003") == 0);
+    CHECK(acq.canPurchase("B001", 1)); // More of an existing title is permitted.
+    const auto batch = acq.processBatch({{"B003", 1}, {"B002", 1}, {"J001", 1}});
+    CHECK(!batch[0].approved && batch[1].approved && batch[2].approved);
+    CHECK(b.usageFor(ResourceCategory::Journal).titles == 1);
+    CHECK(b.usageFor(ResourceCategory::Book).titles == 2);
+    CHECK_THROWS(b.setQuota(ResourceCategory::Book, {1, Money::of(10), -1}),
+                 std::invalid_argument);
+    Budget zero(Money::of(100));
+    zero.setQuota(ResourceCategory::Book, {10, Money::of(100), 0});
+    CHECK_THROWS(zero.commit(ResourceCategory::Book, 1, Money::of(1), "B001"), QuotaExceededError);
+    CHECK_THROWS(zero.commit(ResourceCategory::Book, 1, Money::of(1)), std::invalid_argument);
+    CHECK(zero.spent() == Money{});
+    b.removeQuota(ResourceCategory::Book);
+    CHECK(!b.titlesRemaining(ResourceCategory::Book));
+    acq.purchase("B003", 1);
+    CHECK(b.usageFor(ResourceCategory::Book).titles == 3); // Track even without a limit.
+    std::ostringstream os;
+    b.print(os);
+    CHECK(os.str().find("Titles used/max") != std::string::npos);
+    Budget oneTitle(Money::of(1000));
+    oneTitle.setQuota(ResourceCategory::Book, {20, Money::of(1000), 1});
+    AcquisitionManager batchManager(c, oneTitle);
+    const auto crossing = batchManager.processBatch({{"B001", 1}, {"B002", 1}, {"B001", 1}});
+    CHECK(crossing[0].approved && !crossing[1].approved && crossing[2].approved);
+    CHECK(oneTitle.usageFor(ResourceCategory::Book).titles == 1);
+}
+
+// Part C, Q8: refund recorded totals and preserve the original order history.
+static void testCancellation() {
+    Catalog c;
+    c.emplace<Book>("B001", "Book", std::vector<std::string>{}, "i", "P", 2026, Money::of(100));
+    c.emplace<Book>("B002", "Other", std::vector<std::string>{}, "i", "P", 2026, Money::of(100));
+    c.emplace<Thesis>("T001", "Free", "U", "PhD", "S", 2026);
+    Budget b(Money::of(3000));
+    b.setQuota(ResourceCategory::Book, {20, Money::of(2000), 1});
+    b.setQuota(ResourceCategory::Thesis, {1, Money{}, 1});
+    AcquisitionManager acq(c, b, {1000, 0});
+    const auto first = acq.purchase("B001", 10); // Discounted: 900 + 90 tax.
+    const auto second = acq.purchase("B001", 1);
+    CHECK(b.spent() == Money::of(1100));
+    c.get("B001").setUnitPrice(Money::of(200));
+    acq.setTaxRates({2000, 0});
+    const auto cancellation = acq.cancel(first.orderNo);
+    CHECK(cancellation.cancellation && cancellation.cancelledOrderNo == first.orderNo);
+    CHECK(cancellation.cost == Money::of(990) && cancellation.preTaxCost == Money::of(900));
+    CHECK(b.spent() == Money::of(110) && c.holdings("B001") == 1);
+    CHECK(b.usageFor(ResourceCategory::Book).titles == 1); // One active order remains.
+    CHECK(acq.history()[0].approved && !acq.history()[0].cancellation);
+    CHECK(acq.history()[0].cost == first.cost && acq.history()[0].quantity == 10);
+    CHECK(acq.totalSpent() == b.spent() && acq.totalBeforeTax() == Money::of(100));
+    const auto before = acq.history().size();
+    CHECK_THROWS(acq.cancel(first.orderNo), std::invalid_argument);
+    CHECK_THROWS(acq.cancel(cancellation.orderNo), std::invalid_argument);
+    CHECK_THROWS(acq.cancel(999), std::invalid_argument);
+    CHECK(acq.history().size() == before && b.spent() == Money::of(110));
+    acq.cancel(second.orderNo);
+    CHECK(c.holdings("B001") == 0 && b.spent() == Money{});
+    CHECK(b.usageFor(ResourceCategory::Book).titles == 0);
+    CHECK(*b.unitsRemaining(ResourceCategory::Book) == 20);
+    CHECK(*b.spendRemaining(ResourceCategory::Book) == Money::of(2000));
+    CHECK(acq.canPurchase("B002", 1)); // Freed title slot.
+    const auto free = acq.purchase("T001", 1);
+    acq.cancel(free.orderNo);
+    CHECK(c.holdings("T001") == 0 && b.usageFor(ResourceCategory::Thesis).titles == 0);
+    auto rejected = acq.processBatch({{"missing", 1}})[0];
+    CHECK_THROWS(acq.cancel(rejected.orderNo), std::invalid_argument);
+    auto held = acq.purchase("B002", 2);
+    c.addHoldings("B002", -1); // Simulate holdings no longer available for full cancellation.
+    CHECK_THROWS(acq.cancel(held.orderNo), std::invalid_argument);
+    CHECK(b.spent() == held.cost && c.holdings("B002") == 1);
+    c.addHoldings("B002", 1);
+    acq.cancel(held.orderNo);
+    CHECK(b.spent() == Money{} && acq.totalSpent() == Money{});
+    std::ostringstream os;
+    acq.printReport(os);
+    CHECK(os.str().find("CANCELLED") != std::string::npos);
+    CHECK(os.str().find("refund of order #1") != std::string::npos);
+    CHECK_THROWS(b.refund(ResourceCategory::Book, 1, Money::of(1), "B002"), std::invalid_argument);
+    c.emplace<ElectronicResource>("R001", "DB", "P", 2026, Money::of(10), "url",
+                                  LicenseModel::Perpetual, Money::of(100));
+    acq.setTaxRates({0, 2000});
+    const auto electronic = acq.purchase("R001", 60);
+    CHECK(electronic.preTaxCost == Money::of(650) && electronic.cost == Money::of(780));
+    acq.cancel(electronic.orderNo);
+    CHECK(b.spent() == Money{} && c.holdings("R001") == 0);
+    CHECK(b.usageFor(ResourceCategory::ElectronicResource).titles == 0);
+    const auto removed = acq.purchase("B002", 1);
+    c.remove("B002");
+    CHECK_THROWS(acq.cancel(removed.orderNo), NotFoundError);
+    CHECK(b.spent() == removed.cost && !acq.history().back().cancellation);
+}
+
+// Part C, Q9: independent departments, correct rejection routing and refunds.
+static void testDepartments() {
+    Catalog c;
+    c.emplace<Book>("B001", "Book", std::vector<std::string>{}, "i", "P", 2026, Money::of(100));
+    c.emplace<Book>("B002", "Other", std::vector<std::string>{}, "i", "P", 2026, Money::of(100));
+    Budget defaultBudget(Money::of(1000)), cs(Money::of(500)), physics(Money::of(110));
+    cs.setQuota(ResourceCategory::Book, {4, Money::of(500), 1});
+    physics.setQuota(ResourceCategory::Book, {2, Money::of(500), 1});
+    AcquisitionManager acq(c, defaultBudget, {1000, 0});
+    acq.addDepartment("Computer Science", cs);
+    acq.addDepartment("Physics", physics);
+    CHECK_THROWS(acq.addDepartment("Computer Science", physics), std::invalid_argument);
+    CHECK_THROWS(acq.addDepartment("", cs), std::invalid_argument);
+    CHECK_THROWS(acq.addDepartment("Other", cs), std::invalid_argument);
+    CHECK_THROWS(acq.addDepartment("Default", defaultBudget), std::invalid_argument);
+    CHECK_THROWS(acq.departmentBudget("unknown"), std::invalid_argument);
+    auto batch = acq.processBatch({{"B001", 2, "Computer Science"}, {"B001", 1, "Physics"},
+                                  {"B001", 1, "Physics"}, {"B002", 1, "Computer Science"},
+                                  {"B001", 1, "unknown"}});
+    CHECK(batch[0].approved && batch[1].approved);
+    CHECK(!batch[2].approved && batch[2].reason.find("overall budget") != std::string::npos);
+    CHECK(!batch[3].approved && batch[3].reason.find("title quota") != std::string::npos);
+    CHECK(!batch[4].approved && batch[4].reason.find("unknown department") != std::string::npos);
+    CHECK(batch[0].department == "Computer Science" && batch[4].department == "unknown");
+    CHECK(cs.spent() == Money::of(220) && physics.spent() == Money::of(110));
+    CHECK(defaultBudget.spent() == Money{} && c.holdings("B001") == 3);
+    std::string why;
+    CHECK(!acq.canPurchase("B001", 1, &why, "unknown"));
+    CHECK_THROWS(acq.purchase("B001", 1, "unknown"), std::invalid_argument);
+    acq.cancel(batch[0].orderNo);
+    CHECK(cs.spent() == Money{} && physics.spent() == Money::of(110));
+    CHECK(c.holdings("B001") == 1);
+    CHECK(acq.history().back().department == "Computer Science");
+    CHECK(acq.canPurchase("B002", 1, nullptr, "Computer Science"));
+    acq.purchase("B002", 1, "Computer Science");
+    acq.purchase("B001", 1); // Existing API still charges the default budget.
+    CHECK(defaultBudget.spent() == Money::of(110));
+    CHECK(acq.totalSpent() == cs.spent() + physics.spent() + defaultBudget.spent());
+    std::ostringstream report;
+    acq.printReport(report);
+    CHECK(report.str().find("department: Physics") != std::string::npos);
+}
+
+// Part C, Q10 and the unnumbered quota-warning requirement.
+static void testRolloverAndWarnings() {
+    Budget b(Money::of(1000));
+    b.setQuota(ResourceCategory::Book, {10, Money::of(1000), 2});
+    b.commit(ResourceCategory::Book, 8, Money::of(800), "B001");
+    CHECK(b.warnings().empty()); // Exactly 80% does not exceed 80%.
+    b.commit(ResourceCategory::Book, 1, Money::of(10), "B001");
+    CHECK(b.warnings().size() == 2); // 90% units, 81% spend.
+    std::ostringstream report;
+    b.print(report);
+    CHECK(report.str().find("WARNING: Book past 80% of unit quota") != std::string::npos);
+    CHECK(report.str().find("WARNING: Book past 80% of spend quota") != std::string::npos);
+    Budget next = b.rollover(Money::of(2000), 50);
+    CHECK(next.total() == Money::of(2095)); // Half of unspent 190.
+    CHECK(next.spent() == Money{} && next.usageFor(ResourceCategory::Book).units == 0);
+    CHECK(next.usageFor(ResourceCategory::Book).titles == 0);
+    CHECK(next.quotaFor(ResourceCategory::Book)->maxTitles == 2);
+    CHECK(next.quotaFor(ResourceCategory::Book)->maxSpend == Money::of(1000));
+    CHECK(next.warnings().empty());
+    next.commit(ResourceCategory::Book, 1, Money::of(10), "B002");
+    CHECK(b.spent() == Money::of(810) && b.usageFor(ResourceCategory::Book).titles == 1);
+    CHECK(b.rollover(Money::of(2000), 0).total() == Money::of(2000));
+    CHECK(b.rollover(Money::of(2000), 100).total() == Money::of(2190));
+    CHECK_THROWS(b.rollover(Money::of(1), -1), std::invalid_argument);
+    CHECK_THROWS(b.rollover(Money::of(1), 101), std::invalid_argument);
+    CHECK_THROWS(b.rollover(Money::fromMinor(-1), 50), std::invalid_argument);
+    b.refund(ResourceCategory::Book, 1, Money::of(10), "B001");
+    CHECK(b.warnings().empty()); // Refund returns both usages to exactly 80%.
+    Budget tiny(Money::fromMinor(5));
+    CHECK(tiny.rollover(Money{}, 50).total() == Money::fromMinor(3));
+    Budget noQuota(Money::of(100));
+    noQuota.commit(ResourceCategory::Book, 1, Money::of(99), "B001");
+    CHECK(noQuota.warnings().empty());
+    Budget free(Money{});
+    free.setQuota(ResourceCategory::Thesis, {1, Money{}, 1});
+    free.commit(ResourceCategory::Thesis, 1, Money{}, "T001");
+    CHECK(free.warnings().size() == 1); // Unit warning, no zero-limit division.
+    Budget maximum(Money::fromMinor(std::numeric_limits<std::int64_t>::max()));
+    CHECK_THROWS(maximum.rollover(Money::fromMinor(1), 100), std::overflow_error);
+    CHECK(maximum.rollover(Money{}, 100).total() == maximum.total());
+}
+
 int main() {
     testMoney();
     testResourcesAndCost();
@@ -439,6 +641,10 @@ int main() {
     testHardcoverPricing();
     testBulkPricing();
     testTaxes();
+    testTitleQuotas();
+    testCancellation();
+    testDepartments();
+    testRolloverAndWarnings();
     std::cout << (g_checks - g_failures) << "/" << g_checks << " checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }
