@@ -163,12 +163,155 @@ static void testAcquisition() {
     CHECK(acq.history().size() == 6);
 }
 
+// Part A, Q1: subscription pricing, validation and journal quotas.
+static void testJournal() {
+    Journal annual("J0", "Annual", "1111-2222", 4, "P", 2026, Money::of(100));
+    CHECK(annual.subscriptionYears() == 1);
+    CHECK(annual.costFor(2) == Money::of(200));
+    CHECK(!annual.isDigital());
+    CHECK(annual.issn() == "1111-2222" && annual.issuesPerYear() == 4);
+    CHECK_THROWS(annual.costFor(0), std::invalid_argument);
+    CHECK_THROWS(annual.costFor(-1), std::invalid_argument);
+    CHECK_THROWS(Journal("J", "T", "i", 4, "P", 2026, Money::of(1), 0),
+                 std::invalid_argument);
+    CHECK_THROWS(Journal("J", "T", "i", 4, "P", 2026, Money::of(1), -1),
+                 std::invalid_argument);
+    CHECK_THROWS(Journal("J", "T", "i", 0, "P", 2026, Money::of(1)),
+                 std::invalid_argument);
+    Catalog c;
+    c.emplace<Journal>("J1", "Journal", "1234-5678", 12, "P", 2026, Money::of(100), 3);
+    const Resource& r = c.get("J1");
+    CHECK(r.category() == ResourceCategory::Journal);
+    CHECK(r.costFor(2) == Money::of(600));
+    CHECK(c.byCategory(ResourceCategory::Journal).size() == 1);
+    std::ostringstream details;
+    details << r;
+    CHECK(details.str().find("issn: 1234-5678") != std::string::npos);
+    CHECK(details.str().find("issues per year: 12") != std::string::npos);
+    CHECK(details.str().find("subscription years: 3") != std::string::npos);
+    Budget b(Money::of(2000));
+    b.setQuota(ResourceCategory::Journal, {2, Money::of(600)});
+    AcquisitionManager acq(c, b);
+    acq.purchase("J1", 2);
+    CHECK(c.holdings("J1") == 2 && b.spent() == Money::of(600));
+    CHECK_THROWS(acq.purchase("J1", 1), QuotaExceededError);
+    CHECK(c.holdings("J1") == 2 && b.spent() == Money::of(600));
+    std::ostringstream report;
+    b.print(report);
+    CHECK(report.str().find("Journal") != std::string::npos);
+    CHECK(report.str().find("600.00/600.00") != std::string::npos);
+    Budget spendLimited(Money::of(2000));
+    spendLimited.setQuota(ResourceCategory::Journal, {10, Money::of(599)});
+    CHECK_THROWS(spendLimited.commit(r.category(), 2, r.costFor(2)), QuotaExceededError);
+    CHECK(spendLimited.spent() == Money{});
+}
+
+// Part A, Q2: inherited electronic pricing and separate e-book quotas.
+static void testEBook() {
+    Catalog c;
+    auto& e = c.emplace<EBook>("E1", "Digital Book", std::vector<std::string>{"A", "B"},
+        "isbn", "P", 2026, Money::of(10), "url", FileFormat::EPUB, true,
+        LicenseModel::Perpetual, Money::of(50));
+    const Resource& r = e;
+    CHECK(r.isDigital() && r.category() == ResourceCategory::EBook);
+    CHECK(r.costFor(3) == Money::of(80));
+    CHECK(e.authors().size() == 2 && e.isbn() == "isbn");
+    CHECK(e.format() == FileFormat::EPUB && e.drmProtected());
+    CHECK(e.license() == LicenseModel::Perpetual && e.accessUrl() == "url");
+    CHECK_THROWS(r.costFor(0), std::invalid_argument);
+    CHECK_THROWS(r.costFor(-1), std::invalid_argument);
+    std::ostringstream details;
+    details << r;
+    const auto text = details.str();
+    CHECK(text.find("platform fee: 50.00") < text.find("authors: A and B"));
+    CHECK(text.find("access url: url") != std::string::npos);
+    CHECK(text.find("license: Perpetual") != std::string::npos);
+    CHECK(text.find("isbn: isbn") != std::string::npos);
+    CHECK(text.find("file format: EPUB") != std::string::npos);
+    CHECK(text.find("drm protected: yes") != std::string::npos);
+    for (FileFormat format : {FileFormat::PDF, FileFormat::EPUB, FileFormat::HTML}) {
+        EBook other("E", "T", {}, "i", "P", 2026, Money::of(10), "url", format, false);
+        CHECK(other.costFor(2) == Money::of(20));
+        std::ostringstream os;
+        os << other;
+        CHECK(os.str().find(fileFormatName(format)) != std::string::npos);
+        CHECK(os.str().find("drm protected: no") != std::string::npos);
+    }
+    CHECK_THROWS(EBook("E", "T", {}, "i", "P", 2026, Money::of(1), "url",
+                      static_cast<FileFormat>(99), false), std::invalid_argument);
+    c.emplace<ElectronicResource>("R1", "DB", "P", 2026, Money::of(10), "url");
+    Budget b(Money::of(1000));
+    b.setQuota(ResourceCategory::EBook, {3, Money::of(80)});
+    b.setQuota(ResourceCategory::ElectronicResource, {1, Money::of(10)});
+    AcquisitionManager acq(c, b);
+    acq.purchase("E1", 3);
+    CHECK_THROWS(acq.purchase("E1", 1), QuotaExceededError);
+    acq.purchase("R1", 1); // Exhausting EBook quotas does not consume the DB quota.
+    CHECK(b.usageFor(ResourceCategory::EBook).units == 3);
+    CHECK(b.usageFor(ResourceCategory::ElectronicResource).units == 1);
+    CHECK(c.byCategory(ResourceCategory::EBook).size() == 1);
+    CHECK(c.holdings("E1") == 3);
+    std::ostringstream report;
+    b.print(report);
+    CHECK(report.str().find("EBook") != std::string::npos);
+}
+
+// Part A, Q3: digital audiobook and print thesis through Resource interfaces.
+static void testAudioBookAndThesis() {
+    Catalog c;
+    auto& audio = c.emplace<AudioBook>("A1", "Audio", "P", 2026, Money::of(10), "url",
+                                     "Narrator", 90, LicenseModel::Perpetual, Money::of(5));
+    auto& thesis = c.emplace<Thesis>("T1", "Research", "IIITD", "PhD", "Supervisor", 2026);
+    CHECK(audio.narrator() == "Narrator" && audio.durationMinutes() == 90);
+    CHECK(audio.category() == ResourceCategory::AudioBook && audio.isDigital());
+    const Resource& a = audio;
+    CHECK(a.costFor(2) == Money::of(25));
+    CHECK_THROWS(a.costFor(0), std::invalid_argument);
+    CHECK_THROWS(AudioBook("A", "T", "P", 2026, Money{}, "url", "N", 0),
+                 std::invalid_argument);
+    CHECK_THROWS(AudioBook("A", "T", "P", 2026, Money{}, "url", "N", -1),
+                 std::invalid_argument);
+    CHECK(thesis.category() == ResourceCategory::Thesis && !thesis.isDigital());
+    CHECK(thesis.university() == "IIITD" && thesis.degree() == "PhD");
+    CHECK(thesis.supervisor() == "Supervisor");
+    const Resource& t = thesis;
+    CHECK(t.costFor(3) == Money{});
+    CHECK_THROWS(t.costFor(0), std::invalid_argument);
+    Thesis paid("T2", "Paid", "U", "MSc", "S", 2026, Money::of(5));
+    CHECK(paid.costFor(2) == Money::of(10));
+    std::ostringstream details;
+    details << a << t;
+    CHECK(details.str().find("narrator: Narrator") != std::string::npos);
+    CHECK(details.str().find("duration in minutes: 90") != std::string::npos);
+    CHECK(details.str().find("platform fee: 5.00") != std::string::npos);
+    CHECK(details.str().find("university: IIITD") != std::string::npos);
+    CHECK(details.str().find("degree: PhD") != std::string::npos);
+    CHECK(details.str().find("supervisor: Supervisor") != std::string::npos);
+    Budget b(Money::of(100));
+    b.setQuota(ResourceCategory::AudioBook, {2, Money::of(25)});
+    b.setQuota(ResourceCategory::Thesis, {1, Money{}});
+    AcquisitionManager acq(c, b);
+    acq.purchase("A1", 2);
+    acq.purchase("T1", 1);
+    CHECK_THROWS(acq.purchase("T1", 1), QuotaExceededError);
+    CHECK(c.holdings("A1") == 2 && c.holdings("T1") == 1);
+    CHECK(b.spent() == Money::of(25));
+    CHECK(c.all().size() == 2);
+    std::ostringstream report;
+    b.print(report);
+    CHECK(report.str().find("AudioBook") != std::string::npos);
+    CHECK(report.str().find("Thesis") != std::string::npos);
+}
+
 int main() {
     testMoney();
     testResourcesAndCost();
     testCatalog();
     testBudget();
     testAcquisition();
+    testJournal();
+    testEBook();
+    testAudioBookAndThesis();
     std::cout << (g_checks - g_failures) << "/" << g_checks << " checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }

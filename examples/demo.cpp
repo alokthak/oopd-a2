@@ -66,5 +66,35 @@ int main() {
     } catch (const QuotaExceededError& e) {
         std::cout << "QuotaExceededError: " << e.what() << "\n";
     }
+    // Part A uses a separate budget so the original walkthrough stays intact.
+    std::cout << "\n=== Part A: new resource types ===\n";
+    Catalog extended;
+    extended.emplace<Journal>("J001", "Computing Journal", "1234-5678", 12,
+                              "Publisher", 2026, Money::of(100), 3);
+    extended.emplace<EBook>("E001", "Digital C++", std::vector<std::string>{"Author"},
+                            "978-example", "Publisher", 2026, Money::of(20), "ebook-url",
+                            FileFormat::EPUB, true, LicenseModel::Perpetual, Money::of(50));
+    extended.emplace<ElectronicResource>("DB001", "Database", "Publisher", 2026,
+                                         Money::of(10), "database-url");
+    extended.emplace<AudioBook>("A001", "Audio C++", "Publisher", 2026, Money::of(15),
+                                "audio-url", "Narrator", 180);
+    extended.emplace<Thesis>("T001", "Library Systems", "IIITD", "PhD", "Supervisor", 2026);
+    for (const Resource* r : extended.all()) std::cout << *r << "\n";
+    Budget partABudget(Money::of(2000));
+    partABudget.setQuota(ResourceCategory::Journal, {2, Money::of(600)});
+    partABudget.setQuota(ResourceCategory::EBook, {3, Money::of(110)});
+    partABudget.setQuota(ResourceCategory::ElectronicResource, {1, Money::of(10)});
+    partABudget.setQuota(ResourceCategory::AudioBook, {2, Money::of(30)});
+    partABudget.setQuota(ResourceCategory::Thesis, {1, Money{}});
+    AcquisitionManager partA(extended, partABudget);
+    std::cout << "Journal: 2 copies for 3 years = " << partA.quote("J001", 2) << "\n"
+              << "EBook: 3 seats including platform fee = " << partA.quote("E001", 3) << "\n";
+    partA.processBatch({{"J001", 2}, {"J001", 1}, {"E001", 3}, {"E001", 1},
+                        {"DB001", 1}, {"A001", 2}, {"T001", 1}});
+    partA.printReport(std::cout);
+    partABudget.print(std::cout);
+    for (const Resource* r : extended.all())
+        std::cout << r->id() << ": " << extended.holdings(r->id())
+                  << (r->isDigital() ? " seats" : " copies") << "\n";
     return 0;
 }
