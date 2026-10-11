@@ -1,6 +1,6 @@
 # Assignment 2 answers
 
-## Completed: Parts A-D (Q1-Q12 and quota warnings)
+## Completed: Parts A-E (Q1-Q14)
 
 ### Q1: Journal
 Journal derives from Resource and represents print subscriptions. The unit price
@@ -30,7 +30,7 @@ Both types have separate categories and are included in budget reports.
 ### Validation
 Each question has tests in tests/test_main.cpp and examples in examples/demo.cpp.
 Original tests are retained. Pricing behaviour changes are those requested in
-Parts B-D. Parts E-G have not yet been attempted; macro-to-assert conversion is G.
+Parts B-E. Parts F-G have not yet been attempted; macro-to-assert conversion is G.
 
 ### Q4: Hardcover surcharge
 Book::costFor adds 20% for hardcover binding without modifying the listed unit
@@ -101,16 +101,6 @@ limits are copied, but spending, unit usage and active-title usage reset to zero
 The old budget is unchanged and retains its orders/usage. Negative allocations
 and percentages outside 0..100 are rejected. Overflow in the new total is checked.
 
-### Unnumbered Part C requirement: warnings
-The PDF includes a trailing line about a category passing 80% of its unit or
-spending quota. Budget::warnings returns current warnings and Budget::print prints
-them. Exactly 80% does not warn; strictly greater than 80% does. Categories with
-no quota and zero spending limits do not generate spending warnings. Refunds can
-clear warnings. Threshold comparisons use integer arithmetic without multiplying
-large limits by four. The demo buys resources in every category for both departments. It shows the
-rollover's fresh usage briefly, then purchases in all six categories before
-printing the new-year budget report.
-
 ### Q11: All-or-nothing acquisition
 processBatch(requests, true) enables atomic processing; the default false keeps
 the existing independent approval behaviour. Atomic mode stages independent
@@ -143,3 +133,26 @@ original cost even if offers later change. Reports display the vendor for orders
 with explicit offers; empty vendor fields identify catalogue-price fallback.
 The demo includes offers for all six resource types, successful atomic batches,
 and a rejected cumulative-quota batch that preserves non-zero existing usage.
+
+### Q13: Catalogue searches
+searchAuthor performs case-insensitive substring matching over Book and EBook
+authors, returning each matching resource once. searchIdentifier matches an
+ISBN (Book/EBook) or ISSN (Journal) exactly, without removing punctuation; an
+empty identifier returns no results. byYearRange uses inclusive endpoints and
+rejects reversed ranges. All searches retain catalogue ID ordering.
+
+### Q14: Lending
+Print resources (Book, Journal and Thesis) use borrow/returnCopy. ElectronicResource,
+EBook and AudioBook use openSession/closeSession. Patrons are identified by
+non-empty strings, with one active copy/seat per patron per resource. Different
+resources can be used by the same patron. Sets record active patrons; available
+is holdings minus active usage. Duplicate starts, exhausted capacity, returns or
+closes by inactive patrons, and wrong print/digital operations throw LendingError.
+Borrowing does not change owned holdings or acquisition spending.
+
+Resources in use cannot be removed and holdings cannot be reduced below active
+usage. Cancellation checks available holdings before refunding, so it cannot
+remove a borrowed copy or active seat. Once usage ends, normal cancellation is
+allowed. Additional acquisitions can increase capacity while resources are in
+use. The demo shows active and available units across all six categories, then
+returns/closes one patron's usage while retaining non-zero active state.

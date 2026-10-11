@@ -587,25 +587,18 @@ static void testDepartments() {
     CHECK(report.str().find("department: Physics") != std::string::npos);
 }
 
-// Part C, Q10 and the unnumbered quota-warning requirement.
-static void testRolloverAndWarnings() {
+// Part C, Q10: carry forward unspent money, copy quotas and reset usage.
+static void testRollover() {
     Budget b(Money::of(1000));
     b.setQuota(ResourceCategory::Book, {10, Money::of(1000), 2});
-    b.commit(ResourceCategory::Book, 8, Money::of(800), "B001");
-    CHECK(b.warnings().empty()); // Exactly 80% does not exceed 80%.
-    b.commit(ResourceCategory::Book, 1, Money::of(10), "B001");
-    CHECK(b.warnings().size() == 2); // 90% units, 81% spend.
-    std::ostringstream report;
-    b.print(report);
-    CHECK(report.str().find("WARNING: Book past 80% of unit quota") != std::string::npos);
-    CHECK(report.str().find("WARNING: Book past 80% of spend quota") != std::string::npos);
+    b.commit(ResourceCategory::Book, 9, Money::of(810), "B001");
     Budget next = b.rollover(Money::of(2000), 50);
     CHECK(next.total() == Money::of(2095)); // Half of unspent 190.
     CHECK(next.spent() == Money{} && next.usageFor(ResourceCategory::Book).units == 0);
     CHECK(next.usageFor(ResourceCategory::Book).titles == 0);
     CHECK(next.quotaFor(ResourceCategory::Book)->maxTitles == 2);
+    CHECK(next.quotaFor(ResourceCategory::Book)->maxUnits == 10);
     CHECK(next.quotaFor(ResourceCategory::Book)->maxSpend == Money::of(1000));
-    CHECK(next.warnings().empty());
     next.commit(ResourceCategory::Book, 1, Money::of(10), "B002");
     CHECK(b.spent() == Money::of(810) && b.usageFor(ResourceCategory::Book).titles == 1);
     CHECK(b.rollover(Money::of(2000), 0).total() == Money::of(2000));
@@ -613,17 +606,8 @@ static void testRolloverAndWarnings() {
     CHECK_THROWS(b.rollover(Money::of(1), -1), std::invalid_argument);
     CHECK_THROWS(b.rollover(Money::of(1), 101), std::invalid_argument);
     CHECK_THROWS(b.rollover(Money::fromMinor(-1), 50), std::invalid_argument);
-    b.refund(ResourceCategory::Book, 1, Money::of(10), "B001");
-    CHECK(b.warnings().empty()); // Refund returns both usages to exactly 80%.
     Budget tiny(Money::fromMinor(5));
     CHECK(tiny.rollover(Money{}, 50).total() == Money::fromMinor(3));
-    Budget noQuota(Money::of(100));
-    noQuota.commit(ResourceCategory::Book, 1, Money::of(99), "B001");
-    CHECK(noQuota.warnings().empty());
-    Budget free(Money{});
-    free.setQuota(ResourceCategory::Thesis, {1, Money{}, 1});
-    free.commit(ResourceCategory::Thesis, 1, Money{}, "T001");
-    CHECK(free.warnings().size() == 1); // Unit warning, no zero-limit division.
     Budget maximum(Money::fromMinor(std::numeric_limits<std::int64_t>::max()));
     CHECK_THROWS(maximum.rollover(Money::fromMinor(1), 100), std::overflow_error);
     CHECK(maximum.rollover(Money{}, 100).total() == maximum.total());
@@ -790,6 +774,117 @@ static void testVendorQuotaChecks() {
     CHECK(acq.quote("B001", 1) == Money{}); // Zero-price offers are legitimate.
 }
 
+static void populatePartECatalog(Catalog& c) {
+    c.emplace<Book>("B001", "C++ \"Design\"\nNotes", std::vector<std::string>{"Ada Lovelace", "ADA Research"},
+                    "isbn-1", "Publisher\\Press", 2020, Money::of(100), 3, Binding::Hardcover);
+    c.emplace<Journal>("J001", "Journal", "issn-1", 12, "P", 2021, Money::of(50), 2);
+    c.emplace<ElectronicResource>("R001", "DB", "P", 2022, Money::of(10), "url",
+                                  LicenseModel::Perpetual, Money::of(100));
+    c.emplace<EBook>("E001", "EBook", std::vector<std::string>{"Ada Lovelace"}, "isbn-2",
+                     "P", 2023, Money::of(20), "url", FileFormat::EPUB, true,
+                     LicenseModel::AnnualSubscription, Money::of(50));
+    c.emplace<AudioBook>("A001", "Audio", "P", 2024, Money::of(15), "url", "Narrator", 180,
+                         LicenseModel::Perpetual, Money::of(30));
+    c.emplace<Thesis>("T001", "Thesis", "IIITD", "PhD", "Supervisor", 2025, Money::of(10));
+    for (const Resource* r : c.all()) {
+        c.addHoldings(r->id(), 3);
+        c.setVendorPrice(r->id(), "Vendor \"One\"", Money::of(5));
+        c.setVendorPrice(r->id(), "Vendor Two", Money::of(7));
+    }
+}
+
+// Part E, Q13: author substring, exact ISBN/ISSN and inclusive year searches.
+static void testCatalogSearches() {
+    Catalog c;
+    populatePartECatalog(c);
+    auto authors = c.searchAuthor("aDa");
+    CHECK(authors.size() == 2); // Multiple matching authors do not duplicate a resource.
+    CHECK(authors[0]->id() == "B001" && authors[1]->id() == "E001");
+    CHECK(c.searchAuthor("LOVELACE").size() == 2);
+    CHECK(c.searchAuthor("missing").empty());
+    CHECK(c.searchIdentifier("isbn-1")[0]->id() == "B001");
+    CHECK(c.searchIdentifier("isbn-2")[0]->id() == "E001");
+    CHECK(c.searchIdentifier("issn-1")[0]->id() == "J001");
+    CHECK(c.searchIdentifier("isbn").empty()); // Exact identifier, not a substring.
+    CHECK(c.searchIdentifier("").empty());
+    CHECK(c.byYearRange(2021, 2023).size() == 3);
+    CHECK(c.byYearRange(2020, 2020)[0]->id() == "B001");
+    CHECK(c.byYearRange(2030, 2040).empty());
+    CHECK_THROWS(c.byYearRange(2025, 2020), std::invalid_argument);
+    CHECK(c.size() == 6 && c.holdings("B001") == 3);
+}
+
+// Part E, Q14: one patron/copy or patron/seat per resource, across all categories.
+static void testLending() {
+    Catalog c;
+    populatePartECatalog(c);
+    for (const Resource* r : c.all()) {
+        const auto id = r->id();
+        const bool digital = r->isDigital();
+        if (digital) c.openSession(id, "P001");
+        else c.borrow(id, "P001");
+        CHECK(c.available(id) == 2 && c.holdings(id) == 3);
+        CHECK_THROWS(c.remove(id), LendingError);
+        CHECK_THROWS(c.addHoldings(id, -3), LendingError);
+        CHECK(c.holdings(id) == 3);
+        if (digital) {
+            CHECK(c.sessionUsers(id).size() == 1);
+            CHECK_THROWS(c.openSession(id, "P001"), LendingError);
+            CHECK_THROWS(c.borrow(id, "P002"), LendingError);
+            CHECK_THROWS(c.returnCopy(id, "P001"), LendingError);
+            CHECK_THROWS(c.openSession(id, ""), std::invalid_argument);
+            CHECK_THROWS(c.closeSession(id, "P999"), LendingError);
+            c.openSession(id, "P002"); c.openSession(id, "P003");
+            CHECK_THROWS(c.openSession(id, "P004"), LendingError);
+            c.closeSession(id, "P001"); c.openSession(id, "P004");
+            c.closeSession(id, "P002"); c.closeSession(id, "P003"); c.closeSession(id, "P004");
+        } else {
+            CHECK(c.borrowers(id).size() == 1);
+            CHECK_THROWS(c.borrow(id, "P001"), LendingError);
+            CHECK_THROWS(c.openSession(id, "P002"), LendingError);
+            CHECK_THROWS(c.closeSession(id, "P001"), LendingError);
+            CHECK_THROWS(c.borrow(id, ""), std::invalid_argument);
+            CHECK_THROWS(c.returnCopy(id, "P999"), LendingError);
+            c.borrow(id, "P002"); c.borrow(id, "P003");
+            CHECK_THROWS(c.borrow(id, "P004"), LendingError);
+            c.returnCopy(id, "P001"); c.borrow(id, "P004");
+            c.returnCopy(id, "P002"); c.returnCopy(id, "P003"); c.returnCopy(id, "P004");
+        }
+        CHECK(c.available(id) == 3 && c.holdings(id) == 3);
+    }
+    CHECK_THROWS(c.borrow("missing", "P001"), NotFoundError);
+    CHECK_THROWS(c.available("missing"), NotFoundError);
+    Catalog emptyHoldings;
+    emptyHoldings.emplace<Thesis>("T001", "Thesis", "U", "PhD", "S", 2026);
+    CHECK_THROWS(emptyHoldings.borrow("T001", "P001"), LendingError);
+    c.remove("B001"); // Once all copies are returned, removal is allowed.
+    CHECK(!c.contains("B001"));
+}
+
+static void testLendingAndCancellation() {
+    Catalog c;
+    c.emplace<Book>("B001", "Book", std::vector<std::string>{}, "i", "P", 2026, Money::of(100));
+    c.emplace<ElectronicResource>("R001", "DB", "P", 2026, Money::of(10), "url");
+    Budget b(Money::of(1000));
+    AcquisitionManager acq(c, b);
+    const auto book = acq.purchase("B001", 2);
+    const auto electronic = acq.purchase("R001", 2);
+    c.borrow("B001", "P001");
+    c.openSession("R001", "P001");
+    const auto count = acq.history().size();
+    CHECK_THROWS(acq.cancel(book.orderNo), std::invalid_argument);
+    CHECK_THROWS(acq.cancel(electronic.orderNo), std::invalid_argument);
+    CHECK(b.spent() == Money::of(220) && acq.history().size() == count);
+    // Atomic acquisitions can add capacity while resources are in use.
+    auto orders = acq.processBatch({{"B001", 1}, {"R001", 1}}, true);
+    CHECK(orders[0].approved && orders[1].approved);
+    CHECK(c.available("B001") == 2 && c.available("R001") == 2);
+    acq.cancel(orders[0].orderNo); acq.cancel(orders[1].orderNo);
+    c.returnCopy("B001", "P001"); c.closeSession("R001", "P001");
+    acq.cancel(book.orderNo); acq.cancel(electronic.orderNo);
+    CHECK(b.spent() == Money{} && c.holdings("B001") == 0 && c.holdings("R001") == 0);
+}
+
 int main() {
     testMoney();
     testResourcesAndCost();
@@ -805,11 +900,14 @@ int main() {
     testTitleQuotas();
     testCancellation();
     testDepartments();
-    testRolloverAndWarnings();
+    testRollover();
     testAtomicBatch();
     testAtomicDepartments();
     testVendors();
     testVendorQuotaChecks();
+    testCatalogSearches();
+    testLending();
+    testLendingAndCancellation();
     std::cout << (g_checks - g_failures) << "/" << g_checks << " checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }

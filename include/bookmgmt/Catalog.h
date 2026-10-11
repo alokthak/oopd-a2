@@ -2,6 +2,7 @@
 // Catalog: owns every Resource, keyed by its id, and tracks copies/seats held.
 
 #include <functional>
+#include <set>
 #include <map>
 #include <memory>
 #include <string>
@@ -46,12 +47,24 @@ public:
 
     // Holdings: number of copies (print) or seats (electronic) owned.
     int holdings(const std::string& id) const;
+    // Reductions may not consume copies/seats currently in use.
     void addHoldings(const std::string& id, int units);
+    int available(const std::string& id) const;
+    void borrow(const std::string& id, const std::string& patron);
+    void returnCopy(const std::string& id, const std::string& patron);
+    void openSession(const std::string& id, const std::string& patron);
+    void closeSession(const std::string& id, const std::string& patron);
+    const std::set<std::string>& borrowers(const std::string& id) const;
+    const std::set<std::string>& sessionUsers(const std::string& id) const;
 
     // Queries. Results are in id order and point into the catalog.
     std::vector<const Resource*> all() const;
     std::vector<const Resource*> byCategory(ResourceCategory c) const;
     std::vector<const Resource*> searchTitle(const std::string& text) const;  // case-insensitive
+    std::vector<const Resource*> searchAuthor(const std::string& text) const;
+    std::vector<const Resource*> searchIdentifier(const std::string& isbnOrIssn) const;
+    std::vector<const Resource*> byYearRange(int firstYear, int lastYear) const;
+
     std::vector<const Resource*> where(
         const std::function<bool(const Resource&)>& pred) const;
 
@@ -60,7 +73,12 @@ private:
         std::unique_ptr<Resource> resource;
         int holdings = 0;
         std::vector<VendorOffer> vendors;
+        std::set<std::string> borrowers;
+        std::set<std::string> sessions;
     };
+    std::set<std::string>& lendingUsers(const std::string& id, bool digital);
+    void startUse(const std::string& id, const std::string& patron, bool digital);
+    void endUse(const std::string& id, const std::string& patron, bool digital);
     std::map<std::string, Entry> items_;
 };
 

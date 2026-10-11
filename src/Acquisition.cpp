@@ -120,8 +120,8 @@ const PurchaseRecord& AcquisitionManager::cancel(int orderNo) {
             throw std::invalid_argument("order already cancelled");
     // Copy before appending: vector growth may invalidate the original iterator.
     const PurchaseRecord purchase = *original;
-    if (catalog_.holdings(purchase.resourceId) < purchase.quantity)
-        throw std::invalid_argument("not enough holdings to cancel this order");
+    if (catalog_.available(purchase.resourceId) < purchase.quantity)
+        throw std::invalid_argument("not enough available holdings to cancel this order");
     Budget& charged = departmentBudget(purchase.department);
     // Validate/refund on a copy first, so a rejected cancellation changes nothing.
     Budget refunded = charged;

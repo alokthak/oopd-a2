@@ -35,4 +35,10 @@ public:
     using LibraryError::LibraryError;
 };
 
+// Invalid lending operation or no available print copy/electronic seat.
+class LendingError : public LibraryError {
+public:
+    using LibraryError::LibraryError;
+};
+
 }  // namespace bookmgmt

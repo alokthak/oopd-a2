@@ -9,7 +9,6 @@
 #include <map>
 #include <optional>
 #include <string>
-#include <vector>
 
 #include "bookmgmt/Money.h"
 #include "bookmgmt/Resource.h"
@@ -61,7 +60,6 @@ public:
 
     // New allocation + carryPercent of unspent money; copy quotas, reset usage.
     Budget rollover(Money nextYearAllocation, int carryPercent) const;
-    std::vector<std::string> warnings() const;
 
     void print(std::ostream& os) const;
 

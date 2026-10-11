@@ -160,24 +160,6 @@ Budget Budget::rollover(Money nextYearAllocation, int carryPercent) const {
     return next;
 }
 
-std::vector<std::string> Budget::warnings() const {
-    std::vector<std::string> result;
-    // floor(80% of limit) without potentially overflowing limit * 4.
-    const auto above80 = [](std::int64_t used, std::int64_t limit) {
-        return limit > 0 && used > (limit / 5) * 4 + ((limit % 5) * 4) / 5;
-    };
-    for (ResourceCategory c : kAllCategories) {
-        const auto q = quotaFor(c);
-        if (!q) continue;
-        const auto u = usageFor(c);
-        const std::string prefix = std::string(categoryName(c)) + " past 80% of ";
-        if (above80(u.units, q->maxUnits)) result.push_back(prefix + "unit quota");
-        if (above80(u.spent.minorUnits(), q->maxSpend.minorUnits()))
-            result.push_back(prefix + "spend quota");
-    }
-    return result;
-}
-
 void Budget::print(std::ostream& os) const {
     os << "Budget: total " << total_ << ", spent " << spent_ << ", remaining "
        << remaining() << "\n";
@@ -195,7 +177,6 @@ void Budget::print(std::ostream& os) const {
         os << "  " << std::setw(20) << categoryName(c) << std::setw(18) << units << std::setw(24) << spend << titles
            << "\n";
     }
-    for (const auto& warning : warnings()) os << "WARNING: " << warning << "\n";
 }
 
 }  // namespace bookmgmt

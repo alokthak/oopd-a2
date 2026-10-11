@@ -196,7 +196,7 @@ int main() {
                               {"A001", 4, "Physics"}, {"T001", 3, "Physics"}});
     std::cout << "Repeated B001 purchases count as one title. CS rejects a second title,\n"
               << "while Physics can buy B001 using its independent budget and quotas.\n"
-              << "\nComputer Science before cancellation (warnings above 80%):\n";
+              << "\nComputer Science before cancellation:\n";
     computerScience.print(std::cout);
     std::cout << "\nPhysics budget:\n";
     physics.print(std::cout);
@@ -309,5 +309,47 @@ int main() {
     for (const Resource* r : vendorCatalog.all())
         std::cout << r->id() << ": " << vendorCatalog.holdings(r->id())
                   << (r->isDigital() ? " seats" : " copies") << "\n";
+    std::cout << "\n=== Part E: catalogue searches ===\n";
+    std::cout << "Author search for 'author' (case-insensitive):\n";
+    for (const Resource* r : vendorCatalog.searchAuthor("author")) std::cout << r->summary() << "\n";
+    std::cout << "Exact ISBN search for 'isbn':\n";
+    for (const Resource* r : vendorCatalog.searchIdentifier("isbn")) std::cout << r->summary() << "\n";
+    std::cout << "Exact ISSN search for '1234-5678':\n";
+    for (const Resource* r : vendorCatalog.searchIdentifier("1234-5678")) std::cout << r->summary() << "\n";
+    std::cout << "Publication years 2026 through 2027 (inclusive):\n";
+    for (const Resource* r : vendorCatalog.byYearRange(2026, 2027)) std::cout << r->summary() << "\n";
+
+    std::cout << "\n=== Part E: borrowing and electronic sessions ===\n";
+    for (const Resource* r : vendorCatalog.all()) {
+        if (r->isDigital()) {
+            vendorCatalog.openSession(r->id(), "P001");
+            vendorCatalog.openSession(r->id(), "P002");
+        } else {
+            vendorCatalog.borrow(r->id(), "P001");
+            vendorCatalog.borrow(r->id(), "P002");
+        }
+    }
+    std::cout << "Two patrons use each resource; ownership and budgets stay unchanged.\n";
+    for (const Resource* r : vendorCatalog.all())
+        std::cout << r->id() << ": owned " << vendorCatalog.holdings(r->id())
+                  << ", in use " << (r->isDigital() ? vendorCatalog.sessionUsers(r->id()).size()
+                                                   : vendorCatalog.borrowers(r->id()).size())
+                  << ", available " << vendorCatalog.available(r->id())
+                  << (r->isDigital() ? " seats" : " copies") << "\n";
+    try {
+        vendorCatalog.openSession("R001", "P001");
+    } catch (const LendingError& error) {
+        std::cout << "Intentional duplicate-session rejection: " << error.what() << "\n";
+    }
+    // Return/close one patron's usage for every category, leaving another active.
+    for (const Resource* r : vendorCatalog.all()) {
+        if (r->isDigital()) vendorCatalog.closeSession(r->id(), "P001");
+        else vendorCatalog.returnCopy(r->id(), "P001");
+    }
+    std::cout << "After P001 returns/closes, each resource still has one active patron:\n";
+    for (const Resource* r : vendorCatalog.all())
+        std::cout << r->id() << ": available " << vendorCatalog.available(r->id())
+                  << (r->isDigital() ? " seats" : " copies") << "\n";
+
     return 0;
 }
