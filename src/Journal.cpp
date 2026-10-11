@@ -15,7 +15,7 @@ Journal::Journal(std::string id, std::string title, std::string issn, int issues
 }
 Money Journal::costFor(int copies) const {
     requirePositive(copies);
-    return unitPrice() * copies * subscriptionYears_;
+    return printPrice(unitPrice() * copies * subscriptionYears_, copies);
 }
 void Journal::printDetails(std::ostream& os) const {
     os << "  issn: " << issn_ << "\n"

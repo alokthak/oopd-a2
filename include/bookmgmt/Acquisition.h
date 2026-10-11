@@ -11,6 +11,12 @@
 
 namespace bookmgmt {
 
+// Rates in basis points: 100 = 1%, 750 = 7.5%. Both default to zero.
+struct TaxRates {
+    int printBasisPoints = 0;
+    int electronicBasisPoints = 0;
+};
+
 struct PurchaseRequest {
     std::string resourceId;
     int quantity;  // copies for print, seats for electronic
@@ -22,17 +28,21 @@ struct PurchaseRecord {
     std::string title;
     ResourceCategory category;
     int quantity;
-    Money cost;
+    Money cost;  // post-tax amount used for quotas and budget
     bool approved;
     std::string reason;  // why it was rejected; empty if approved
+    Money preTaxCost;
 };
 
 class AcquisitionManager {
 public:
-    AcquisitionManager(Catalog& catalog, Budget& budget);
+    AcquisitionManager(Catalog& catalog, Budget& budget, TaxRates taxes = {});
+    void setTaxRates(TaxRates taxes);
+    TaxRates taxRates() const { return taxes_; }
 
-    // Price of a request without buying anything. Throws NotFoundError.
+    // Post-tax price without buying anything. Throws NotFoundError.
     Money quote(const std::string& id, int quantity) const;
+    Money quoteBeforeTax(const std::string& id, int quantity) const;
 
     // True if the purchase would be approved; if not, `reason` explains why.
     bool canPurchase(const std::string& id, int quantity,
@@ -50,13 +60,16 @@ public:
 
     const std::vector<PurchaseRecord>& history() const { return history_; }
     Money totalSpent() const;
+    Money totalBeforeTax() const;
 
     void printReport(std::ostream& os) const;
 
 private:
     PurchaseRecord& record(const Resource* r, const std::string& id, int qty,
-                           Money cost, bool approved, std::string reason);
+                           Money cost, bool approved, std::string reason, Money preTaxCost);
+    Money taxedPrice(const Resource& resource, Money preTaxCost) const;
 
+    TaxRates taxes_;
     Catalog& catalog_;
     Budget& budget_;
     std::vector<PurchaseRecord> history_;

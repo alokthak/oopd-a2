@@ -1,4 +1,5 @@
 #include "bookmgmt/ElectronicResource.h"
+#include "bookmgmt/Pricing.h"
 
 #include <ostream>
 #include <stdexcept>
@@ -27,7 +28,10 @@ ElectronicResource::ElectronicResource(std::string id, std::string title,
 
 Money ElectronicResource::costFor(int seats) const {
     requirePositive(seats);
-    return platformFee_ + unitPrice() * seats;
+    const int fullPriceSeats = seats > 50 ? 50 : seats;
+    const int halfPriceSeats = seats > 50 ? seats - 50 : 0;
+    return platformFee_ + unitPrice() * fullPriceSeats
+           + scalePrice(unitPrice() * halfPriceSeats, 1, 2);
 }
 
 void ElectronicResource::printDetails(std::ostream& os) const {

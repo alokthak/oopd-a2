@@ -20,6 +20,8 @@ public:
     int edition() const { return edition_; }
     Binding binding() const { return binding_; }
 
+    Money costFor(int copies) const override;
+
     ResourceCategory category() const override { return ResourceCategory::Book; }
 
 protected:

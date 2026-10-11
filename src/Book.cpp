@@ -1,4 +1,5 @@
 #include "bookmgmt/Book.h"
+#include "bookmgmt/Pricing.h"
 
 #include <ostream>
 #include <stdexcept>
@@ -23,6 +24,14 @@ Book::Book(std::string id, std::string title, std::vector<std::string> authors,
       edition_(edition),
       binding_(binding) {
     if (edition_ < 1) throw std::invalid_argument("edition must be >= 1");
+}
+
+Money Book::costFor(int copies) const {
+    requirePositive(copies);
+    // Apply the surcharge and bulk discount together, rounding only once.
+    const int surcharge = binding_ == Binding::Hardcover ? 120 : 100;
+    const int discount = copies >= 10 ? 90 : 100;
+    return scalePrice(unitPrice() * copies, surcharge * discount, 10000);
 }
 
 void Book::printDetails(std::ostream& os) const {

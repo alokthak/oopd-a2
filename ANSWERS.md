@@ -1,6 +1,6 @@
 # Assignment 2 answers
 
-## Completed: Part A (Q1-Q3)
+## Completed: Parts A and B (Q1-Q6)
 
 ### Q1: Journal
 Journal derives from Resource and represents print subscriptions. The unit price
@@ -29,5 +29,32 @@ Both types have separate categories and are included in budget reports.
 
 ### Validation
 Each question has tests in tests/test_main.cpp and examples in examples/demo.cpp.
-Original public function behaviour and original test cases are preserved.
-Parts B-G have not yet been attempted; the macro-to-assert change belongs to G.
+Original tests are retained. Pricing behaviour changes are those requested in
+Part B. Parts C-G have not yet been attempted; macro-to-assert conversion is G.
+
+### Q4: Hardcover surcharge
+Book::costFor adds 20% for hardcover binding without modifying the listed unit
+price. Paperback pricing is unchanged below the bulk threshold.
+
+### Q5: Bulk discounts
+Print items (Book, Journal and Thesis) receive 10% off the entire request when
+buying at least 10 copies. Hardcover surcharge is applied before the discount;
+both factors are combined before rounding. Journal pricing includes all
+subscription years before discounting. ElectronicResource, EBook and AudioBook
+charge full price for the first 50 seats and half price for additional seats;
+the platform fee is never discounted. Thresholds apply per request, not to
+accumulated holdings. Integer arithmetic rounds fractional minor units to the
+nearest paise/cent, with ties rounded upward. The discounted electronic subtotal
+is rounded once, rather than rounding each half-price seat independently.
+
+### Q6: Taxes
+TaxRates configures print and electronic rates in basis points (100 = 1%). Rates
+must be non-negative and default to zero. Constructor configuration and
+setTaxRates are supported. Tax is calculated on the discounted pre-tax amount,
+including any platform fee, and rounded to the nearest minor unit, ties upward.
+Resource::costFor and quoteBeforeTax provide pre-tax prices; quote returns the
+post-tax price. canPurchase, purchase and processBatch all check spend quotas
+and overall budget against this same post-tax amount. Unit quotas still count
+copies/seats. PurchaseRecord stores preTaxCost and post-tax cost, so later tax
+changes do not rewrite history. Reports show both amounts per order and both
+approved-order totals; rejected orders are excluded from totals.

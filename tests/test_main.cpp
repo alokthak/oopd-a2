@@ -303,6 +303,130 @@ static void testAudioBookAndThesis() {
     CHECK(report.str().find("Thesis") != std::string::npos);
 }
 
+// Part B, Q4: hardcover surcharge; listed unit price stays unchanged.
+static void testHardcoverPricing() {
+    Book hard("H", "Hard", {}, "i", "P", 2026, Money::of(100), 1, Binding::Hardcover);
+    Book paper("P", "Paper", {}, "i", "P", 2026, Money::of(100));
+    const Resource& r = hard;
+    CHECK(r.costFor(1) == Money::of(120));
+    CHECK(r.costFor(3) == Money::of(360));
+    CHECK(hard.unitPrice() == Money::of(100));
+    CHECK(paper.costFor(3) == Money::of(300));
+    CHECK_THROWS(hard.costFor(0), std::invalid_argument);
+    CHECK_THROWS(hard.costFor(-1), std::invalid_argument);
+    hard.setUnitPrice(Money::fromMinor(3));
+    CHECK(hard.costFor(1) == Money::fromMinor(4)); // 3.6 rounds upward.
+}
+
+// Part B, Q5: boundaries and inherited rules for all resource types.
+static void testBulkPricing() {
+    Book paper("P", "Paper", {}, "i", "P", 2026, Money::of(100));
+    Book hard("H", "Hard", {}, "i", "P", 2026, Money::of(100), 1, Binding::Hardcover);
+    CHECK(paper.costFor(9) == Money::of(900));
+    CHECK(paper.costFor(10) == Money::of(900));
+    CHECK(paper.costFor(11) == Money::of(990));
+    CHECK(hard.costFor(9) == Money::of(1080));
+    CHECK(hard.costFor(10) == Money::of(1080));
+    CHECK(hard.costFor(11) == Money::of(1188));
+    Journal journal("J", "Journal", "i", 12, "P", 2026, Money::of(100), 3);
+    CHECK(journal.costFor(9) == Money::of(2700));
+    CHECK(journal.costFor(10) == Money::of(2700));
+    Thesis thesis("T", "Thesis", "U", "PhD", "S", 2026, Money::of(10));
+    CHECK(thesis.costFor(10) == Money::of(90));
+    Thesis free("F", "Free", "U", "PhD", "S", 2026);
+    CHECK(free.costFor(10) == Money{});
+    ElectronicResource db("D", "DB", "P", 2026, Money::of(10), "url",
+                          LicenseModel::Perpetual, Money::of(100));
+    CHECK(db.costFor(49) == Money::of(590));
+    CHECK(db.costFor(50) == Money::of(600));
+    CHECK(db.costFor(51) == Money::of(605));
+    CHECK(db.costFor(60) == Money::of(650));
+    EBook ebook("E", "EBook", {}, "i", "P", 2026, Money::of(10), "url",
+                FileFormat::PDF, false, LicenseModel::Perpetual, Money::of(100));
+    AudioBook audio("A", "Audio", "P", 2026, Money::of(10), "url", "N", 90,
+                    LicenseModel::Perpetual, Money::of(100));
+    CHECK(ebook.costFor(51) == db.costFor(51));
+    CHECK(audio.costFor(60) == db.costFor(60));
+    ElectronicResource tiny("M", "Tiny", "P", 2026, Money::fromMinor(1), "url");
+    CHECK(tiny.costFor(51) == Money::fromMinor(51));
+    CHECK(tiny.costFor(52) == Money::fromMinor(51)); // Discounted subtotal rounded once.
+    CHECK_THROWS(db.costFor(-1), std::invalid_argument);
+    // Separate purchases do not combine to earn a bulk discount.
+    CHECK(paper.costFor(5) + paper.costFor(5) == Money::of(1000));
+}
+
+// Part B, Q6: quote, approval and batch paths use the same post-tax amount.
+static void testTaxes() {
+    Catalog c;
+    c.emplace<Book>("B", "Book", std::vector<std::string>{}, "i", "P", 2026, Money::of(100));
+    c.emplace<ElectronicResource>("D", "DB", "P", 2026, Money::of(10), "url",
+                                  LicenseModel::Perpetual, Money::of(100));
+    c.emplace<Journal>("J", "Journal", "i", 12, "P", 2026, Money::of(100), 2);
+    c.emplace<EBook>("E", "EBook", std::vector<std::string>{}, "i", "P", 2026,
+                     Money::of(10), "url", FileFormat::PDF, false);
+    c.emplace<AudioBook>("A", "Audio", "P", 2026, Money::of(10), "url", "N", 90);
+    c.emplace<Thesis>("T", "Thesis", "U", "PhD", "S", 2026);
+    Budget b(Money::of(5000));
+    AcquisitionManager acq(c, b);
+    CHECK(acq.quote("B", 1) == Money::of(100)); // Zero tax default.
+    acq.setTaxRates({1000, 2000}); // 10% print; 20% electronic.
+    c.emplace<Book>("H", "Hard", std::vector<std::string>{}, "i", "P", 2026,
+                    Money::of(100), 1, Binding::Hardcover);
+    CHECK(acq.quoteBeforeTax("H", 10) == Money::of(1080));
+    CHECK(acq.quote("H", 10) == Money::of(1188));
+    CHECK(acq.quoteBeforeTax("B", 10) == Money::of(900));
+    CHECK(acq.quote("B", 10) == Money::of(990));
+    CHECK(acq.quoteBeforeTax("D", 60) == Money::of(650));
+    CHECK(acq.quote("D", 60) == Money::of(780)); // Fee is taxed too.
+    CHECK(acq.quote("J", 1) == Money::of(220));
+    CHECK(acq.quote("E", 1) == Money::of(12));
+    CHECK(acq.quote("A", 1) == Money::of(12));
+    CHECK(acq.quote("T", 1) == Money{});
+    CHECK_THROWS(acq.setTaxRates({-1, 2000}), std::invalid_argument);
+    CHECK(acq.taxRates().printBasisPoints == 1000);
+    CHECK_THROWS(AcquisitionManager(c, b, {0, -1}), std::invalid_argument);
+    b.setQuota(ResourceCategory::Book, {20, Money::of(100)});
+    std::string why;
+    CHECK(!acq.canPurchase("B", 1, &why)); // Pre-tax fits, post-tax does not.
+    CHECK(why.find("spend quota") != std::string::npos);
+    CHECK_THROWS(acq.purchase("B", 1), QuotaExceededError);
+    CHECK(c.holdings("B") == 0 && b.spent() == Money{});
+    auto rejected = acq.processBatch({{"B", 1}, {"missing", 1}, {"B", 0}});
+    CHECK(!rejected[0].approved && rejected[0].preTaxCost == Money::of(100));
+    CHECK(rejected[0].cost == Money::of(110));
+    CHECK(rejected[1].preTaxCost == Money{} && rejected[2].cost == Money{});
+    CHECK(b.spent() == Money{} && c.holdings("B") == 0);
+    b.setQuota(ResourceCategory::Book, {20, Money::of(110)});
+    const auto record = acq.purchase("B", 1);
+    CHECK(record.preTaxCost == Money::of(100) && record.cost == Money::of(110));
+    CHECK(b.usageFor(ResourceCategory::Book).spent == Money::of(110));
+    CHECK(acq.totalBeforeTax() == Money::of(100) && acq.totalSpent() == Money::of(110));
+    acq.setTaxRates({500, 750});
+    CHECK(acq.quote("B", 1) == Money::of(105));
+    CHECK(acq.history().back().cost == Money::of(110)); // History preserves old rate.
+    std::ostringstream report;
+    acq.printReport(report);
+    CHECK(report.str().find("pre-tax: 100.00, post-tax: 110.00") != std::string::npos);
+    CHECK(report.str().find("Total pre-tax: 100.00") != std::string::npos);
+    CHECK(report.str().find("Total post-tax (spent): 110.00") != std::string::npos);
+    Budget small(Money::of(109));
+    AcquisitionManager limited(c, small, {1000, 0});
+    CHECK(!limited.canPurchase("B", 1));
+    CHECK_THROWS(limited.purchase("B", 1), BudgetExceededError);
+    CHECK(small.spent() == Money{});
+    Budget electronicBudget(Money::of(1000));
+    electronicBudget.setQuota(ResourceCategory::ElectronicResource, {60, Money::of(650)});
+    AcquisitionManager electronic(c, electronicBudget, {0, 2000});
+    CHECK(!electronic.processBatch({{"D", 60}})[0].approved);
+    electronicBudget.setQuota(ResourceCategory::ElectronicResource, {60, Money::of(780)});
+    CHECK(electronic.processBatch({{"D", 60}})[0].approved);
+    CHECK(electronicBudget.spent() == Money::of(780));
+    c.emplace<Book>("tiny", "Tiny", std::vector<std::string>{}, "i", "P", 2026,
+                    Money::fromMinor(5));
+    acq.setTaxRates({1000, 0});
+    CHECK(acq.quote("tiny", 1) == Money::fromMinor(6)); // Half a paise rounds up.
+}
+
 int main() {
     testMoney();
     testResourcesAndCost();
@@ -312,6 +436,9 @@ int main() {
     testJournal();
     testEBook();
     testAudioBookAndThesis();
+    testHardcoverPricing();
+    testBulkPricing();
+    testTaxes();
     std::cout << (g_checks - g_failures) << "/" << g_checks << " checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }

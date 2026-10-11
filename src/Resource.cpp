@@ -1,4 +1,5 @@
 #include "bookmgmt/Resource.h"
+#include "bookmgmt/Pricing.h"
 
 #include <ostream>
 #include <sstream>
@@ -41,7 +42,12 @@ void Resource::requirePositive(int quantity) {
 
 Money Resource::costFor(int quantity) const {
     requirePositive(quantity);
-    return unitPrice_ * quantity;
+    return printPrice(unitPrice_ * quantity, quantity);
+}
+
+Money Resource::printPrice(Money undiscounted, int copies) {
+    requirePositive(copies);
+    return copies >= 10 ? scalePrice(undiscounted, 90, 100) : undiscounted;
 }
 
 void Resource::print(std::ostream& os) const {

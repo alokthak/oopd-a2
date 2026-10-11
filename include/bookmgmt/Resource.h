@@ -45,7 +45,8 @@ public:
 
     // Total cost of acquiring `quantity` units of this resource.
     // "Unit" means copies for print items and user seats for electronic
-    // licences. Default: unitPrice * quantity. Throws if quantity <= 0.
+    // licences. Prices are pre-tax. Print purchases of >= 10 copies receive
+    // 10% off. Throws if quantity <= 0.
     // EXTENSION POINT: override for discounts, fees, tiered pricing, ...
     virtual Money costFor(int quantity) const;
 
@@ -58,6 +59,7 @@ protected:
     // Subclasses append their own fields (one "  key: value" line each).
     virtual void printDetails(std::ostream& os) const;
     static void requirePositive(int quantity);
+    static Money printPrice(Money undiscounted, int copies);
 
 private:
     std::string id_;

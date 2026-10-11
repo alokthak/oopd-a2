@@ -10,7 +10,8 @@ enum class LicenseModel { Perpetual, AnnualSubscription };
 
 // An online resource licensed per concurrent-user seat (databases, e-journal
 // packages, software, ...). unitPrice = price per seat.
-// costFor(seats) = platformFee + unitPrice * seats.
+// costFor: platform fee + full price for the first 50 seats,
+// then half price for additional seats (pre-tax).
 class ElectronicResource : public Resource {
 public:
     ElectronicResource(std::string id, std::string title, std::string publisher,
