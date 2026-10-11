@@ -74,6 +74,8 @@ public:
     // Net approved amounts after subtracting cancellation refunds.
     Money totalSpent() const;
     Money totalBeforeTax() const;
+    // For histories involving departments with different currencies.
+    std::map<std::string, Money> totalsByCurrency(bool beforeTax = false) const;
 
     void printReport(std::ostream& os) const;
 

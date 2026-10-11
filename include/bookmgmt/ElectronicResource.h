@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <optional>
 
 #include "bookmgmt/Resource.h"
 
@@ -17,7 +18,7 @@ public:
     ElectronicResource(std::string id, std::string title, std::string publisher,
                        int year, Money pricePerSeat, std::string accessUrl,
                        LicenseModel license = LicenseModel::AnnualSubscription,
-                       Money platformFee = Money{});
+                       std::optional<Money> platformFee = std::nullopt);
 
     const std::string& accessUrl() const { return accessUrl_; }
     LicenseModel license() const { return license_; }

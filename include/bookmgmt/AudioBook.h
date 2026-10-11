@@ -9,7 +9,7 @@ public:
     AudioBook(std::string id, std::string title, std::string publisher, int year,
               Money pricePerSeat, std::string accessUrl, std::string narrator,
               int durationMinutes, LicenseModel license = LicenseModel::AnnualSubscription,
-              Money platformFee = Money{});
+              std::optional<Money> platformFee = std::nullopt);
     const std::string& narrator() const { return narrator_; }
     int durationMinutes() const { return durationMinutes_; }
     ResourceCategory category() const override { return ResourceCategory::AudioBook; }

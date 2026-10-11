@@ -351,5 +351,57 @@ int main() {
         std::cout << r->id() << ": available " << vendorCatalog.available(r->id())
                   << (r->isDigital() ? " seats" : " copies") << "\n";
 
+    std::cout << "\n=== Part F: currency-aware Money ===\n";
+    const Money dollars = Money::of(125, 50, "USD");
+    const Money moreDollars = Money::of(24, 50, "USD");
+    const Money euros = Money::of(75, 0, "EUR");
+    std::cout << "USD " << dollars << " + USD " << moreDollars
+              << " = USD " << (dollars + moreDollars) << "\n"
+              << "USD " << dollars << " - USD " << moreDollars
+              << " = USD " << (dollars - moreDollars) << "\n";
+    try { (void)(dollars + euros); }
+    catch (const CurrencyMismatchError& error) {
+        std::cout << "Intentional mixed-currency addition rejection: " << error.what() << "\n";
+    }
+    try { (void)(dollars - euros); }
+    catch (const CurrencyMismatchError& error) {
+        std::cout << "Intentional mixed-currency subtraction rejection: " << error.what() << "\n";
+    }
+    try { (void)(dollars < euros); }
+    catch (const CurrencyMismatchError& error) {
+        std::cout << "Intentional mixed-currency comparison rejection: " << error.what() << "\n";
+    }
+
+    std::cout << "\n=== Part F: USD acquisitions across all six categories ===\n";
+    const auto usdPrice = [](int amount) { return Money::of(amount, 0, "USD"); };
+    Catalog currencyCatalog;
+    currencyCatalog.emplace<Book>("B001", "USD Hardcover", std::vector<std::string>{"Author"},
+                                  "isbn", "Publisher", 2027, usdPrice(100), 1, Binding::Hardcover);
+    currencyCatalog.emplace<Journal>("J001", "USD Journal", "1234-5678", 12,
+                                     "Publisher", 2027, usdPrice(50), 2);
+    currencyCatalog.emplace<ElectronicResource>("R001", "USD Database", "Publisher", 2027,
+                                               usdPrice(10), "database-url",
+                                               LicenseModel::Perpetual, usdPrice(100));
+    currencyCatalog.emplace<EBook>("E001", "USD EBook", std::vector<std::string>{"Author"},
+                                   "isbn", "Publisher", 2027, usdPrice(20), "ebook-url",
+                                   FileFormat::EPUB, false, LicenseModel::Perpetual, usdPrice(50));
+    currencyCatalog.emplace<AudioBook>("A001", "USD AudioBook", "Publisher", 2027,
+                                       usdPrice(15), "audio-url", "Narrator", 180,
+                                       LicenseModel::Perpetual, usdPrice(30));
+    currencyCatalog.emplace<Thesis>("T001", "USD Printed Thesis", "IIITD", "PhD", "Supervisor",
+                                   2027, usdPrice(10));
+    currencyCatalog.setVendorPrice("B001", "US Campus Supply", usdPrice(80));
+    currencyCatalog.setVendorPrice("B001", "US Library Market", usdPrice(90));
+    Budget dollarBudget(usdPrice(10000));
+    for (const Resource* r : currencyCatalog.all())
+        dollarBudget.setQuota(r->category(), {100, usdPrice(5000), 2});
+    AcquisitionManager dollarAcq(currencyCatalog, dollarBudget, {1000, 2000});
+    dollarAcq.processBatch({{"B001", 10}, {"J001", 10}, {"R001", 60},
+                            {"E001", 60}, {"A001", 60}, {"T001", 10}}, true);
+    dollarAcq.printReport(std::cout);
+    dollarBudget.print(std::cout);
+    for (const Resource* r : currencyCatalog.all())
+        std::cout << r->id() << ": " << currencyCatalog.holdings(r->id())
+                  << (r->isDigital() ? " seats" : " copies") << "\n";
     return 0;
 }

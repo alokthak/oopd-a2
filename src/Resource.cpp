@@ -33,6 +33,10 @@ Resource::Resource(std::string id, std::string title, std::string publisher,
 
 void Resource::setUnitPrice(Money price) {
     if (price.isNegative()) throw std::invalid_argument("price must not be negative");
+    if (price.currency() != unitPrice().currency())
+        throw CurrencyMismatchError("resource and supplied price currencies differ");
+    if (price.currency() != unitPrice_.currency())
+        throw CurrencyMismatchError("cannot change resource currency through repricing");
     unitPrice_ = price;
 }
 
@@ -47,6 +51,8 @@ Money Resource::costFor(int quantity) const {
 Money Resource::costAtUnitPrice(int quantity, Money price) const {
     requirePositive(quantity);
     if (price.isNegative()) throw std::invalid_argument("price must not be negative");
+    if (price.currency() != unitPrice().currency())
+        throw CurrencyMismatchError("resource and supplied price currencies differ");
     return printPrice(price * quantity, quantity);
 }
 
@@ -60,7 +66,8 @@ void Resource::print(std::ostream& os) const {
        << "  title: " << title_ << "\n"
        << "  publisher: " << publisher_ << "\n"
        << "  year: " << year_ << "\n"
-       << "  unit price: " << unitPrice_ << "\n";
+       << "  unit price: " << unitPrice_ << "\n"
+       << "  currency: " << unitPrice_.currency() << "\n";
     printDetails(os);
 }
 
@@ -69,7 +76,7 @@ void Resource::printDetails(std::ostream&) const {}
 std::string Resource::summary() const {
     std::ostringstream os;
     os << "[" << categoryName(category()) << "] " << id_ << "  " << title_
-       << " (" << year_ << ")  @ " << unitPrice_;
+       << " (" << year_ << ")  @ " << unitPrice_ << " " << unitPrice_.currency();
     return os.str();
 }
 

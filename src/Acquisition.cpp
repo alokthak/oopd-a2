@@ -241,24 +241,31 @@ std::vector<PurchaseRecord> AcquisitionManager::processAtomicBatch(
     return results;
 }
 
+std::map<std::string, Money> AcquisitionManager::totalsByCurrency(bool beforeTax) const {
+    std::map<std::string, Money> totals;
+    for (const auto& rec : history_) {
+        if (!rec.approved) continue;
+        const Money amount = beforeTax ? rec.preTaxCost : rec.cost;
+        auto& total = totals.try_emplace(amount.currency(),
+            Money::fromMinor(0, amount.currency())).first->second;
+        if (rec.cancellation) total -= amount;
+        else total += amount;
+    }
+    if (totals.empty()) totals.emplace(budget_.total().currency(),
+        Money::fromMinor(0, budget_.total().currency()));
+    return totals;
+}
+
 Money AcquisitionManager::totalSpent() const {
-    Money sum;
-    for (const auto& rec : history_)
-        if (rec.approved) {
-            if (rec.cancellation) sum -= rec.cost;
-            else sum += rec.cost;
-        }
-    return sum;
+    const auto totals = totalsByCurrency();
+    if (totals.size() != 1) throw CurrencyMismatchError("history has multiple currencies; use totalsByCurrency");
+    return totals.begin()->second;
 }
 
 Money AcquisitionManager::totalBeforeTax() const {
-    Money sum;
-    for (const auto& rec : history_)
-        if (rec.approved) {
-            if (rec.cancellation) sum -= rec.preTaxCost;
-            else sum += rec.preTaxCost;
-        }
-    return sum;
+    const auto totals = totalsByCurrency(true);
+    if (totals.size() != 1) throw CurrencyMismatchError("history has multiple currencies; use totalsByCurrency");
+    return totals.begin()->second;
 }
 
 void AcquisitionManager::printReport(std::ostream& os) const {
@@ -269,15 +276,18 @@ void AcquisitionManager::printReport(std::ostream& os) const {
            << rec.resourceId << " x" << std::setw(3) << rec.quantity << " "
            << std::setw(12) << std::right << rec.cost.toString() << std::left << "  "
            << rec.title << "  [pre-tax: " << rec.preTaxCost
-           << ", post-tax: " << rec.cost << "]";
+           << ", post-tax: " << rec.cost << "]"
+           << "  [currency: " << rec.cost.currency() << "]";
         if (!rec.vendor.empty()) os << "  [vendor: " << rec.vendor << "]";
         if (!rec.department.empty()) os << "  [department: " << rec.department << "]";
         if (rec.cancellation) os << "  [refund of order #" << rec.cancelledOrderNo << "]";
         if (!rec.approved) os << "\n        reason: " << rec.reason;
         os << "\n";
     }
-    os << "Total pre-tax: " << totalBeforeTax() << "\n"
-       << "Total post-tax (spent): " << totalSpent() << "\n";
+    const auto preTaxTotals = totalsByCurrency(true);
+    for (const auto& [currency, total] : totalsByCurrency())
+        os << "Total pre-tax: " << preTaxTotals.at(currency) << " " << currency << "\n"
+           << "Total post-tax (spent): " << total << " " << currency << "\n";
 }
 
 }  // namespace bookmgmt

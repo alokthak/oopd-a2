@@ -1,6 +1,6 @@
 # Assignment 2 answers
 
-## Completed: Parts A-E (Q1-Q14)
+## Completed: Parts A-F (Q1-Q15)
 
 ### Q1: Journal
 Journal derives from Resource and represents print subscriptions. The unit price
@@ -30,7 +30,7 @@ Both types have separate categories and are included in budget reports.
 ### Validation
 Each question has tests in tests/test_main.cpp and examples in examples/demo.cpp.
 Original tests are retained. Pricing behaviour changes are those requested in
-Parts B-E. Parts F-G have not yet been attempted; macro-to-assert conversion is G.
+Parts B-F. Part G has not yet been attempted; macro-to-assert conversion is G.
 
 ### Q4: Hardcover surcharge
 Book::costFor adds 20% for hardcover binding without modifying the listed unit
@@ -156,3 +156,29 @@ remove a borrowed copy or active seat. Once usage ends, normal cancellation is
 allowed. Additional acquisitions can increase capacity while resources are in
 use. The demo shows active and available units across all six categories, then
 returns/closes one patron's usage while retaining non-zero active state.
+
+### Q15: Currency-aware money
+Money carries a three-uppercase-letter code; INR is the default to preserve
+existing construction calls. of(major, minor, code) and fromMinor(minor, code)
+create explicit currencies; currency() exposes the code. No conversion or
+exchange-rate lookup is performed. Adding/subtracting (including += and -=) and
+all six comparisons throw CurrencyMismatchError for different currencies, even
+for zero amounts. Failed compound operations leave the original value unchanged.
+Multiplication preserves the code. toString and stream formatting stay numeric
+for compatibility; resource and acquisition reports separately display currency.
+
+Discount and tax calculations preserve currency. Budgets initialize balances and
+usage in their own currency, reject mismatched spending quotas/purchases/refunds,
+and require the rollover allocation to use the current currency. Vendor offers
+must match the resource currency; repricing cannot change a resource's currency.
+An omitted electronic platform fee defaults to zero in the seat-price currency;
+an explicitly supplied fee, including zero, must match. Optional fee parameters
+make this distinction while retaining existing calls that pass a Money fee.
+
+Departments may use independent currencies. Acquisition reports and
+totalsByCurrency group amounts without conversion; totalSpent/totalBeforeTax
+throw if history contains multiple currencies. With one currency they return
+a total in that currency, and empty history uses the default budget's currency.
+Tests exercise foreign-currency pricing, vendor selection, taxed atomic batches,
+refunds, rollover and mixed-currency departments. The demo shows successful USD
+arithmetic, intentional mismatches and non-zero USD purchases in all categories.

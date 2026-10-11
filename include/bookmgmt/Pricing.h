@@ -15,6 +15,6 @@ inline Money scalePrice(Money amount, int numerator, int denominator) {
     const auto maximum = std::numeric_limits<std::int64_t>::max();
     if (numerator != 0 && whole > (maximum - fraction) / numerator)
         throw std::overflow_error("scaled price is too large");
-    return Money::fromMinor(whole * numerator + fraction);
+    return Money::fromMinor(whole * numerator + fraction, amount.currency());
 }
 }  // namespace bookmgmt

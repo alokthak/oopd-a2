@@ -35,6 +35,11 @@ public:
     using LibraryError::LibraryError;
 };
 
+class CurrencyMismatchError : public std::invalid_argument {
+public:
+    using std::invalid_argument::invalid_argument;
+};
+
 // Invalid lending operation or no available print copy/electronic seat.
 class LendingError : public LibraryError {
 public:

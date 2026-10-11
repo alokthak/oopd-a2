@@ -14,7 +14,7 @@ public:
     EBook(std::string id, std::string title, std::vector<std::string> authors,
           std::string isbn, std::string publisher, int year, Money pricePerSeat,
           std::string accessUrl, FileFormat format, bool drmProtected,
-          LicenseModel license = LicenseModel::AnnualSubscription, Money platformFee = Money{});
+          LicenseModel license = LicenseModel::AnnualSubscription, std::optional<Money> platformFee = std::nullopt);
     const std::vector<std::string>& authors() const { return authors_; }
     const std::string& isbn() const { return isbn_; }
     FileFormat format() const { return format_; }

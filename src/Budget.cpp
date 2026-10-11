@@ -20,13 +20,15 @@ const ResourceCategory kAllCategories[] = {ResourceCategory::Book,
                                            ResourceCategory::Thesis};
 }
 
-Budget::Budget(Money total) : total_(total) {
+Budget::Budget(Money total) : total_(total), spent_(Money::fromMinor(0, total.currency())) {
     if (total_.isNegative()) throw std::invalid_argument("budget must not be negative");
 }
 
 void Budget::setQuota(ResourceCategory c, Quota q) {
     if (q.maxUnits < 0 || q.maxSpend.isNegative() || (q.maxTitles && *q.maxTitles < 0))
         throw std::invalid_argument("quota limits must not be negative");
+    if (q.maxSpend.currency() != total_.currency())
+        throw CurrencyMismatchError("quota and budget currencies differ");
     quotas_[c] = q;
 }
 
@@ -40,7 +42,7 @@ std::optional<Quota> Budget::quotaFor(ResourceCategory c) const {
 
 Usage Budget::usageFor(ResourceCategory c) const {
     auto it = usage_.find(c);
-    return it == usage_.end() ? Usage{} : it->second;
+    return it == usage_.end() ? Usage{0, Money::fromMinor(0, total_.currency()), 0} : it->second;
 }
 
 std::optional<int> Budget::unitsRemaining(ResourceCategory c) const {
@@ -57,6 +59,10 @@ std::optional<Money> Budget::spendRemaining(ResourceCategory c) const {
 
 Budget::Failure Budget::evaluate(ResourceCategory c, int units, Money cost,
                                  const std::string& resourceId, std::string& why) const {
+    if (cost.currency() != total_.currency()) {
+        why = "purchase and budget currencies differ";
+        return Failure::BadInput;
+    }
     if (units <= 0) {
         why = "quantity must be positive";
         return Failure::BadInput;
@@ -112,13 +118,14 @@ void Budget::commit(ResourceCategory c, int units, Money cost, const std::string
         case Failure::Quota: throw QuotaExceededError(why);
         case Failure::Overall: throw BudgetExceededError(why);
     }
-    Usage& u = usage_[c];
+    Usage& u = usage_.try_emplace(c, Usage{0, Money::fromMinor(0, total_.currency()), 0}).first->second;
     u.units += units;
     u.spent += cost;
     spent_ += cost;
     auto& titles = titleUsage_[c];
     if (!resourceId.empty() && !titles.count(resourceId)) ++u.titles;
-    auto& title = titles[resourceId];
+    auto& title = titles.try_emplace(resourceId,
+        TitleUsage{0, Money::fromMinor(0, total_.currency())}).first->second;
     title.units += units;
     title.spent += cost;
 }
@@ -130,6 +137,8 @@ std::optional<int> Budget::titlesRemaining(ResourceCategory c) const {
 }
 
 void Budget::refund(ResourceCategory c, int units, Money cost, const std::string& resourceId) {
+    if (cost.currency() != total_.currency())
+        throw CurrencyMismatchError("refund and budget currencies differ");
     const auto category = titleUsage_.find(c);
     if (units <= 0 || cost.isNegative() || category == titleUsage_.end())
         throw std::invalid_argument("invalid refund");
@@ -152,6 +161,8 @@ void Budget::refund(ResourceCategory c, int units, Money cost, const std::string
 Budget Budget::rollover(Money nextYearAllocation, int carryPercent) const {
     if (nextYearAllocation.isNegative() || carryPercent < 0 || carryPercent > 100)
         throw std::invalid_argument("rollover requires non-negative allocation and 0..100 percent");
+    if (nextYearAllocation.currency() != total_.currency())
+        throw CurrencyMismatchError("rollover allocation and current budget currencies differ");
     const Money carry = scalePrice(remaining(), carryPercent, 100);
     if (nextYearAllocation.minorUnits() > std::numeric_limits<std::int64_t>::max() - carry.minorUnits())
         throw std::overflow_error("next year's budget is too large");
@@ -162,7 +173,7 @@ Budget Budget::rollover(Money nextYearAllocation, int carryPercent) const {
 
 void Budget::print(std::ostream& os) const {
     os << "Budget: total " << total_ << ", spent " << spent_ << ", remaining "
-       << remaining() << "\n";
+       << remaining() << "\nCurrency: " << total_.currency() << "\n";
     os << std::left << std::setw(22) << "  Category" << std::setw(18) << "Units used/max"
        << std::setw(24) << "Spend used/max" << "Titles used/max\n";
     for (ResourceCategory c : kAllCategories) {

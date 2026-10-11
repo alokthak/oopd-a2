@@ -885,6 +885,135 @@ static void testLendingAndCancellation() {
     CHECK(b.spent() == Money{} && c.holdings("B001") == 0 && c.holdings("R001") == 0);
 }
 
+// Part F, Q15: every mixed-currency arithmetic/comparison must throw, even zero.
+static void testMoneyCurrencies() {
+    const Money usd = Money::of(10, 50, "USD");
+    const Money eur = Money::of(10, 50, "EUR");
+    CHECK(Money{}.currency() == "INR");
+    CHECK(Money::of(1).currency() == "INR");
+    CHECK(usd.currency() == "USD" && usd.toString() == "10.50");
+    CHECK(Money::fromMinor(1050, "USD") == usd);
+    CHECK(usd + Money::of(2, 0, "USD") == Money::of(12, 50, "USD"));
+    CHECK(usd - Money::of(2, 0, "USD") == Money::of(8, 50, "USD"));
+    CHECK(usd * 2 == Money::of(21, 0, "USD"));
+    CHECK(2 * usd == Money::of(21, 0, "USD"));
+    CHECK(Money::of(-3, 50, "USD").toString() == "-3.50");
+    CHECK(usd == Money::of(10, 50, "USD"));
+    CHECK(usd != Money::of(10, 0, "USD"));
+    CHECK(usd > Money::of(10, 0, "USD"));
+    CHECK(usd >= Money::of(10, 50, "USD"));
+    CHECK(usd < Money::of(11, 0, "USD"));
+    CHECK(usd <= Money::of(10, 50, "USD"));
+    CHECK_THROWS(usd + eur, CurrencyMismatchError);
+    CHECK_THROWS(usd - eur, CurrencyMismatchError);
+    CHECK_THROWS(usd == eur, CurrencyMismatchError);
+    CHECK_THROWS(usd != eur, CurrencyMismatchError);
+    CHECK_THROWS(usd < eur, CurrencyMismatchError);
+    CHECK_THROWS(usd <= eur, CurrencyMismatchError);
+    CHECK_THROWS(usd > eur, CurrencyMismatchError);
+    CHECK_THROWS(usd >= eur, CurrencyMismatchError);
+    Money unchanged = usd;
+    CHECK_THROWS(unchanged += eur, CurrencyMismatchError);
+    CHECK(unchanged == usd);
+    CHECK_THROWS(unchanged -= eur, CurrencyMismatchError);
+    CHECK(unchanged == usd);
+    CHECK_THROWS(Money::fromMinor(0, "USD") + Money{}, CurrencyMismatchError);
+    CHECK_THROWS(Money::fromMinor(0, "USD") == Money{}, CurrencyMismatchError);
+    CHECK_THROWS(Money::of(1, 0, "usd"), std::invalid_argument);
+    CHECK_THROWS(Money::fromMinor(1, "US"), std::invalid_argument);
+    CHECK_THROWS(Money::fromMinor(1, ""), std::invalid_argument);
+    CHECK_THROWS(Money::fromMinor(1, "U1D"), std::invalid_argument);
+}
+
+static void testForeignCurrencyPricing() {
+    const auto dollars = [](int amount) { return Money::of(amount, 0, "USD"); };
+    Catalog c;
+    c.emplace<Book>("B001", "Book", std::vector<std::string>{}, "i", "P", 2027,
+                    dollars(100), 1, Binding::Hardcover);
+    c.emplace<Journal>("J001", "Journal", "issn", 12, "P", 2027, dollars(50), 2);
+    c.emplace<ElectronicResource>("R001", "DB", "P", 2027, dollars(10), "url",
+                                  LicenseModel::Perpetual, dollars(100));
+    c.emplace<EBook>("E001", "EBook", std::vector<std::string>{}, "i", "P", 2027,
+                     dollars(20), "url", FileFormat::PDF, false,
+                     LicenseModel::Perpetual, dollars(50));
+    c.emplace<AudioBook>("A001", "Audio", "P", 2027, dollars(15), "url", "N", 180,
+                         LicenseModel::Perpetual, dollars(30));
+    c.emplace<Thesis>("T001", "Thesis", "U", "PhD", "S", 2027, dollars(10));
+    ElectronicResource omitted("R", "DB", "P", 2027, dollars(10), "url");
+    CHECK(omitted.platformFee() == dollars(0));
+    CHECK(omitted.costFor(1) == dollars(10));
+    EBook ebook("E", "EBook", {}, "i", "P", 2027, dollars(10), "url", FileFormat::PDF, false);
+    AudioBook audio("A", "Audio", "P", 2027, dollars(10), "url", "N", 90);
+    CHECK(ebook.costFor(1) == dollars(10) && audio.costFor(1) == dollars(10));
+    CHECK_THROWS(ElectronicResource("R", "DB", "P", 2027, dollars(10), "url",
+                                   LicenseModel::Perpetual, Money{}), CurrencyMismatchError);
+    Budget b(dollars(10000));
+    for (const Resource* r : c.all()) b.setQuota(r->category(), {100, dollars(5000), 2});
+    CHECK(b.spent() == dollars(0));
+    CHECK(b.usageFor(ResourceCategory::Book).spent == dollars(0));
+    AcquisitionManager acq(c, b, {1000, 2000});
+    CHECK(acq.totalSpent() == dollars(0));
+    CHECK(acq.quoteBeforeTax("B001", 10) == dollars(1080));
+    CHECK(acq.quote("B001", 10) == dollars(1188));
+    CHECK(acq.quote("J001", 10) == dollars(990));
+    CHECK(acq.quote("R001", 60) == dollars(780));
+    CHECK(acq.quote("E001", 60) == dollars(1380));
+    CHECK(acq.quote("A001", 60) == dollars(1026));
+    CHECK(acq.quote("T001", 10) == dollars(99));
+    c.setVendorPrice("B001", "USD Vendor", dollars(80));
+    CHECK(acq.quote("B001", 10) == Money::of(950, 40, "USD"));
+    CHECK_THROWS(c.setVendorPrice("B001", "Wrong", Money::of(50)), CurrencyMismatchError);
+    CHECK_THROWS(c.get("B001").setUnitPrice(Money::of(100)), CurrencyMismatchError);
+    CHECK_THROWS(b.setQuota(ResourceCategory::Book, {100, Money::of(1000)}), CurrencyMismatchError);
+    CHECK_THROWS(b.commit(ResourceCategory::Book, 1, Money::of(100), "B001"), std::invalid_argument);
+    CHECK(b.spent() == dollars(0));
+    auto purchases = acq.processBatch({{"B001", 10}, {"J001", 10}, {"R001", 60},
+                                       {"E001", 60}, {"A001", 60}, {"T001", 10}}, true);
+    for (const auto& record : purchases) CHECK(record.approved && record.cost.currency() == "USD");
+    const Money spent = b.spent();
+    acq.cancel(purchases[0].orderNo);
+    CHECK(b.spent() == spent - purchases[0].cost);
+    CHECK(acq.totalSpent() == b.spent());
+    CHECK(b.usageFor(ResourceCategory::Book).spent == dollars(0));
+    CHECK_THROWS(b.refund(ResourceCategory::Journal, 1, Money::of(1), "J001"), CurrencyMismatchError);
+    Budget next = b.rollover(dollars(10000), 50);
+    CHECK(next.total().currency() == "USD" && next.spent() == dollars(0));
+    CHECK(next.quotaFor(ResourceCategory::Book)->maxSpend.currency() == "USD");
+    CHECK_THROWS(b.rollover(Money::of(10000), 50), CurrencyMismatchError);
+    std::ostringstream report;
+    acq.printReport(report); b.print(report);
+    CHECK(report.str().find("currency: USD") != std::string::npos);
+    CHECK(report.str().find("Currency: USD") != std::string::npos);
+}
+
+static void testMixedCurrencyDepartments() {
+    Catalog c;
+    c.emplace<Book>("B001", "INR Book", std::vector<std::string>{}, "i", "P", 2027, Money::of(100));
+    c.emplace<Book>("B002", "USD Book", std::vector<std::string>{}, "i", "P", 2027,
+                    Money::of(10, 0, "USD"));
+    Budget india(Money::of(1000)), us(Money::of(100, 0, "USD"));
+    AcquisitionManager acq(c, india);
+    acq.addDepartment("US", us);
+    CHECK(!acq.canPurchase("B002", 1));
+    auto failed = acq.processBatch({{"B001", 1}, {"B002", 1}}, true);
+    CHECK(!failed[0].approved && !failed[1].approved);
+    CHECK(india.spent() == Money{} && us.spent() == Money::of(0, 0, "USD"));
+    auto success = acq.processBatch({{"B001", 2}, {"B002", 3, "US"}}, true);
+    CHECK(success[0].approved && success[1].approved);
+    CHECK(india.spent() == Money::of(200) && us.spent() == Money::of(30, 0, "USD"));
+    CHECK_THROWS(acq.totalSpent(), CurrencyMismatchError);
+    CHECK_THROWS(acq.totalBeforeTax(), CurrencyMismatchError);
+    const auto totals = acq.totalsByCurrency();
+    CHECK(totals.at("INR") == Money::of(200));
+    CHECK(totals.at("USD") == Money::of(30, 0, "USD"));
+    std::ostringstream report;
+    acq.printReport(report);
+    CHECK(report.str().find("Total post-tax (spent): 200.00 INR") != std::string::npos);
+    CHECK(report.str().find("Total post-tax (spent): 30.00 USD") != std::string::npos);
+    auto rejected = acq.processBatch({{"B001", 1, "US"}});
+    CHECK(!rejected[0].approved && us.spent() == Money::of(30, 0, "USD"));
+}
+
 int main() {
     testMoney();
     testResourcesAndCost();
@@ -908,6 +1037,9 @@ int main() {
     testCatalogSearches();
     testLending();
     testLendingAndCancellation();
+    testMoneyCurrencies();
+    testForeignCurrencyPricing();
+    testMixedCurrencyDepartments();
     std::cout << (g_checks - g_failures) << "/" << g_checks << " checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }

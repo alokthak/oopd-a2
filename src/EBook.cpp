@@ -16,7 +16,7 @@ const char* fileFormatName(FileFormat format) {
 EBook::EBook(std::string id, std::string title, std::vector<std::string> authors,
              std::string isbn, std::string publisher, int year, Money pricePerSeat,
              std::string accessUrl, FileFormat format, bool drmProtected,
-             LicenseModel license, Money platformFee)
+             LicenseModel license, std::optional<Money> platformFee)
     : ElectronicResource(std::move(id), std::move(title), std::move(publisher), year,
                          pricePerSeat, std::move(accessUrl), license, platformFee),
       authors_(std::move(authors)), isbn_(std::move(isbn)), format_(format),

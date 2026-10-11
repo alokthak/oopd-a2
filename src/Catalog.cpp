@@ -62,6 +62,8 @@ void Catalog::setVendorPrice(const std::string& id, const std::string& vendor, M
     get(id); // Validate the resource before accessing its entry.
     if (vendor.empty() || unitPrice.isNegative())
         throw std::invalid_argument("vendor name must be non-empty and price non-negative");
+    if (unitPrice.currency() != get(id).unitPrice().currency())
+        throw CurrencyMismatchError("vendor and resource currencies differ");
     auto& offers = items_.at(id).vendors;
     for (auto& offer : offers) {
         if (offer.vendor == vendor) {
